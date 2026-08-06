@@ -1,7 +1,7 @@
 # Chess Engine
 
-UCI-compatible chess engine written from scratch in C++(17).
-Sıfırdan C++(17) ile yazılmış, UCI uyumlu satranç motoru.
+UCI-compatible chess engine written from scratch in C++17.
+Sıfırdan C++17 ile yazılmış, UCI uyumlu satranç motoru.
 
 ---
 
