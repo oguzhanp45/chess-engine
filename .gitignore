@@ -36,3 +36,8 @@ Makefile
 # Isletim sistemi
 .DS_Store
 Thumbs.db
+
+# Visiual Studio proje dosyalari (Cmakelists.txt yeterli)
+*.sln
+*.vcxproj
+*.vcxproj.user
