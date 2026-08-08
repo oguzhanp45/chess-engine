@@ -30,6 +30,7 @@ add_library(chessengine STATIC
     AI.cpp
     Polyglot.cpp
     Notation.cpp
+    EngineApi.cpp
     Tests.cpp
 )
 target_include_directories(chessengine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

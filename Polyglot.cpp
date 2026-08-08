@@ -124,6 +124,19 @@ bool PolyglotBook::load(const std::string& path) {
     return true;
 }
 
+bool PolyglotBook::loadFromMemory(const unsigned char* bytes, size_t size) {
+    if (bytes == nullptr || size == 0 || (size % 16) != 0) {
+        info("info string Bellekteki kitap verisi gecersiz");
+        loadFailed = true;
+        return false;
+    }
+    data.assign(bytes, bytes + size);
+    loaded = true;
+    loadFailed = false;
+    info("info string Acilis kitabi bellekten yuklendi: " + std::to_string(size / 16) + " kayit");
+    return true;
+}
+
 Move PolyglotBook::getBookMove(ChessBoard& board, MoveGenerator& moveGen) {
     if (!loaded || data.empty()) return Move();
 

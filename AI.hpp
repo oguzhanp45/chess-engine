@@ -3,6 +3,8 @@
 #include "MoveGen.hpp"
 #include "Polyglot.hpp"
 #include <atomic>
+#include <random>
+#include <utility>
 #include <chrono>
 #include <functional>
 #include <string>
@@ -78,6 +80,11 @@ private:
     std::function<void(const std::string&)> onInfo;
     void info(const std::string& msg) { if (onInfo) onInfo(msg); }
 
+    // FAZ 5b: seviye sistemi
+    int skillLevel = 20;
+    std::mt19937 skillRng{ std::random_device{}() };
+    std::vector<std::pair<int, Move>> rootScores;   // son tamamlanan yinelemenin kok skorlari
+
     std::vector<unsigned long long> searchHistory;
 
 public:
@@ -108,6 +115,30 @@ public:
 
     // --- FAZ 1: son aramanin skoru (test ve raporlama icin) ---
     int lastScore = 0;
+    int lastDepth = 0;
+    int lastSkillLoss = 0;   // FAZ 5b: seviye yuzunden feda edilen santipiyon
+
+    // ============================================================
+    //  FAZ 5b: SEVIYE SISTEMI
+    // ============================================================
+    // Tuketici bir satranc uygulamasinda en kritik ozellik budur.
+    // Kullanicinin 900'de makul, 1500'de zorlayici bir rakip bulmasi
+    // motorun ham gucunden cok daha onemli.
+    //
+    // Iki kaldirac kullaniyoruz:
+    //   1) Derinlik siniri  - kaba ama guvenilir merdiven
+    //   2) Hamle secim gurultus - en iyiye "yeterince yakin" hamleler
+    //      arasindan agirlikli rastgele secim. Sabit sig arama yerine
+    //      ara sira hata yapan bir rakip daha insani hissettiriyor.
+    //
+    // 20 = tam guc (hicbir sinir yok). 0 = en zayif.
+    void setSkillLevel(int level);
+    int  getSkillLevel() const { return skillLevel; }
+
+    // Kitabi bellekten yukle (Android'de dosya yok, asset var)
+    bool loadBookFromMemory(const unsigned char* bytes, size_t size) {
+        return book.loadFromMemory(bytes, size);
+    }
 
     void clearTT();
     void clearHistory();

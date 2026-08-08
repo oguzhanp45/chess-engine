@@ -170,6 +170,15 @@ bool AI::isInCheck(ChessBoard& board) {
 }
 
 // FAZ 4b: TT boyutunu MB cinsinden ayarla (giris sayisi 2'nin kuvveti olur)
+// ============================================================
+//  FAZ 5b: SEVIYE
+// ============================================================
+void AI::setSkillLevel(int level) {
+    if (level < 0) level = 0;
+    if (level > 20) level = 20;
+    skillLevel = level;
+}
+
 void AI::setHashSizeMB(int mb) {
     if (mb < 1) mb = 1;
     size_t bytes = (size_t)mb * 1024u * 1024u;
@@ -966,6 +975,16 @@ Move AI::getBestMoveTimed(ChessBoard& board, int maxDepth, long long limitMs, lo
     Move absoluteBestMove = legalMoves[0];
     Move bestMoveInDepth;
 
+    // FAZ 5b: zayif seviyelerde derinligi sinirla.
+    // Seviye 20 -> sinir yok. 0 -> derinlik 1.
+    bool skillMode = (skillLevel < 20);
+    if (skillMode) {
+        int lvlDepth = 1 + (skillLevel * 9) / 20;   // 1 ... 10
+        if (lvlDepth < maxDepth) maxDepth = lvlDepth;
+    }
+    rootScores.clear();
+    std::vector<std::pair<int, Move>> lastCompletedScores;
+
     // FAZ 3a: skor artik sira sahibine gore, tek yonlu.
     int previousScore = -INFINITE_SCORE;
     int olderScore = previousScore;
@@ -993,6 +1012,8 @@ Move AI::getBestMoveTimed(ChessBoard& board, int maxDepth, long long limitMs, lo
 
             orderMoves(legalMoves, board, 0, absoluteBestMove, Move());   // FAZ 3b: kok = ply 0
 
+            rootScores.clear();
+
             for (const Move& m : legalMoves) {
                 board.makeMove(m);
                 int boardValue = -search(board, currentDepth - 1, 1, -currentBeta, -currentAlpha, true, m, Move());
@@ -1000,9 +1021,18 @@ Move AI::getBestMoveTimed(ChessBoard& board, int maxDepth, long long limitMs, lo
 
                 if (stopSearch) break;
 
+                rootScores.push_back(std::make_pair(boardValue, m));
+
                 // FAZ 3a: kok de artik sadece maksimize ediyor.
                 if (boardValue > bestValue) { bestValue = boardValue; bestMoveInDepth = m; }
-                if (bestValue > currentAlpha) currentAlpha = bestValue;
+
+                // FAZ 5b: seviye modunda alpha'yi YUKSELTMIYORUZ.
+                // Normalde alpha yukseldikce sonraki hamleler sadece "daha
+                // kotu" diye isaretlenir, gercek skorlari bilinmez. Seviye
+                // secimi icin her hamlenin gercek skoru lazim; bu yuzden
+                // tam pencereyle ariyoruz. Zayif seviyelerde derinlik zaten
+                // dusuk oldugu icin maliyeti onemsiz.
+                if (!skillMode && bestValue > currentAlpha) currentAlpha = bestValue;
             }
 
             if (stopSearch) break;
@@ -1036,12 +1066,14 @@ Move AI::getBestMoveTimed(ChessBoard& board, int maxDepth, long long limitMs, lo
 
             olderScore = previousScore;
             previousScore = bestValue;
+            lastCompletedScores = rootScores;
             break;
         }
 
         if (stopSearch) break;
         absoluteBestMove = bestMoveInDepth;
         // FAZ 3a: previousScore zaten motorun kendi acisindan; cevirmeye gerek yok.
+        lastDepth = currentDepth;
         int displayScore = previousScore;
         lastScore = displayScore;   // FAZ 1: testler icin
         {
@@ -1078,6 +1110,46 @@ Move AI::getBestMoveTimed(ChessBoard& board, int maxDepth, long long limitMs, lo
             else if (!inCrisis && elapsed > (timeLimitMs * 0.6)) {
                 break;
             }
+        }
+    }
+
+    // ============================================================
+    //  FAZ 5b: SEVIYEYE GORE HAMLE SECIMI
+    // ============================================================
+    // Her kok hamlesinin skoruna rastgele bir "gurultu" ekleyip en yuksegi
+    // seciyoruz. Boylece d santipiyon daha kotu bir hamle ancak kendi cekilisi
+    // en iyininkini d kadar asarsa kazanir - yani fark buyudukce secilme
+    // olasiligi hizla duser. Sabit bir marj icinde duzgun rastgele secmekten
+    // cok daha iyi davraniyor: sakin pozisyonlarda cesitlilik korunuyor,
+    // acik bir en-iyi hamle varken nadiren kaciriliyor.
+    //
+    // Gurultu seviyeyle KAREsel olarak buyuyor: seviye 19'da neredeyse sifir,
+    // seviye 0'da 200 santipiyon. Boylece ust seviyeler birbirine yakin,
+    // alt seviyeler belirgin sekilde zayif oluyor.
+    lastSkillLoss = 0;
+    if (skillMode && lastCompletedScores.size() > 1) {
+        int gap = 20 - skillLevel;
+        int noise = (gap * gap) / 2;   // 19 -> 0, 15 -> 12, 10 -> 50, 5 -> 112, 0 -> 200
+
+        int best = lastCompletedScores[0].first;
+        for (size_t i = 1; i < lastCompletedScores.size(); i++)
+            if (lastCompletedScores[i].first > best) best = lastCompletedScores[i].first;
+
+        // Mat gorduysek oyunu uzatmayalim; en iyisini oyna.
+        if (noise > 0 && std::abs(best) < MATE_THRESHOLD) {
+            std::uniform_int_distribution<int> dist(0, noise);
+            int bestNoisy = -INFINITE_SCORE;
+            int chosenScore = best;
+
+            for (size_t i = 0; i < lastCompletedScores.size(); i++) {
+                int noisy = lastCompletedScores[i].first + dist(skillRng);
+                if (noisy > bestNoisy) {
+                    bestNoisy = noisy;
+                    absoluteBestMove = lastCompletedScores[i].second;
+                    chosenScore = lastCompletedScores[i].first;
+                }
+            }
+            lastSkillLoss = best - chosenScore;
         }
     }
 

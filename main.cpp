@@ -234,6 +234,15 @@ int main() {
         else if (command == "hashtest") {
             stopAndJoin(); Tests::runHashTest(*game, moveGen); game->initializeBoard();
         }
+        else if (command == "apitest") {
+            stopAndJoin(); Tests::runApiTest(); game->initializeBoard();
+        }
+        else if (command == "leveltest") {
+            stopAndJoin(); Tests::runLevelTest(); game->initializeBoard();
+        }
+        else if (command == "santest") {
+            stopAndJoin(); Tests::runSanTest(*game, moveGen); game->initializeBoard();
+        }
         else if (command == "mirror") {
             stopAndJoin(); Tests::runMirrorTest(*game, *chessAI); game->initializeBoard();
         }

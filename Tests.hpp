@@ -48,4 +48,14 @@ namespace Tests {
     // Polyglot spesifikasyonundaki 9 referans anahtar. Artimli zobristKey
     // bunlarla birebir tutmali (en passant ve rok dahil).
     void runHashTest(ChessBoard& board, MoveGenerator& mg);
+
+    // --- FAZ 5b KABUL TESTI ---
+    // SAN uretimi: belirsizlik giderme, rok, terfi, en passant, sah/mat.
+    void runSanTest(ChessBoard& board, MoveGenerator& mg);
+
+    // EngineApi cephesini uctan uca dener (kopru bunu kullanacak).
+    void runApiTest();
+
+    // Seviye sistemi: dusuk seviyeler gercekten daha zayif mi oynuyor?
+    void runLevelTest();
 }

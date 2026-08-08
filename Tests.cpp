@@ -1,5 +1,6 @@
 #include "Tests.hpp"
 #include "Polyglot.hpp"
+#include "EngineApi.hpp"
 #include <iostream>
 #include <sstream>
 #include <vector>
@@ -358,6 +359,182 @@ namespace Tests {
 
         board.setFen(START_FEN);
         std::cout << "\n=== SONUC: " << pass << " gecti, " << fail << " kaldi ===\n" << std::endl;
+    }
+
+    // ---------------- FAZ 5b: SAN TESTI ----------------
+
+    struct SanCase {
+        const char* fen;
+        const char* uci;
+        const char* san;
+        const char* note;
+    };
+
+    static const SanCase SAN_CASES[] = {
+        { START_FEN, "e2e4", "e4", "basit piyon hamlesi" },
+        { START_FEN, "g1f3", "Nf3", "at hamlesi" },
+        { "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2",
+          "e4d5", "exd5", "piyon alimi (kalkis dosyasi ile)" },
+        { "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
+          "e1g1", "O-O", "kisa rok" },
+        { "r3kbnr/pppqpppp/2n5/3p1b2/3P1B2/2N5/PPPQPPPP/R3KBNR w KQkq - 6 5",
+          "e1c1", "O-O-O", "uzun rok" },
+        { "7k/3P4/8/8/8/8/8/K7 w - - 0 1",
+          "d7d8q", "d8=Q+", "terfi + sah" },
+        { "r1bqkb1r/pppp1ppp/2n2n2/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
+          "b5c6", "Bxc6", "fil alimi" },
+          // Belirsizlik: iki at da d2'ye gidebiliyor, dosyalar farkli -> dosya harfi
+          { "4k3/8/8/8/8/8/8/1N1K1N2 w - - 0 1",
+            "b1d2", "Nbd2", "belirsizlik: dosya ile ayirt" },
+            // Belirsizlik: iki kale de e-dosyasinda, satirlar farkli -> satir rakami
+            { "4k3/8/8/8/R7/8/8/R3K3 w Q - 0 1",
+              "a1a3", "R1a3", "belirsizlik: satir ile ayirt" },
+              // Belirsizlik: uc vezir ayni kareye gidebiliyor -> tam kare
+              { "4k3/Q7/8/8/8/8/8/Q3K1Q1 w - - 0 1",
+                "a1d4", "Qa1d4", "belirsizlik: tam kare gerekli" },
+                // En passant
+                { "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3",
+                  "e5f6", "exf6", "en passant alimi" },
+                  // Mat
+                  { "6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1",
+                    "a1a8", "Ra8#", "mat isareti" }
+    };
+
+    void runSanTest(ChessBoard& board, MoveGenerator& mg) {
+        int n = (int)(sizeof(SAN_CASES) / sizeof(SAN_CASES[0]));
+        int pass = 0, fail = 0;
+
+        std::cout << "\n=== SAN (STANDART GOSTERIM) TESTI ===\n" << std::endl;
+
+        for (int i = 0; i < n; i++) {
+            const SanCase& sc = SAN_CASES[i];
+            if (!board.setFen(sc.fen)) {
+                std::cout << "  HATA FEN okunamadi: " << sc.fen << std::endl; fail++; continue;
+            }
+
+            Move m;
+            if (!Notation::fromUci(sc.uci, board, mg, m)) {
+                std::cout << "  HATA hamle legal degil: " << sc.uci << "   " << sc.note << std::endl;
+                std::cout << "        " << sc.fen << std::endl;
+                fail++; continue;
+            }
+
+            std::string got = Notation::toSan(m, board, mg);
+            bool ok = (got == sc.san);
+            if (ok) pass++; else fail++;
+
+            std::cout << (ok ? "  OK   " : "  HATA ")
+                << std::setw(8) << sc.uci << "  ->  " << std::setw(8) << got
+                << "  (beklenen " << sc.san << ")   " << sc.note << std::endl;
+            if (!ok) std::cout << "        " << sc.fen << std::endl;
+        }
+
+        board.setFen(START_FEN);
+        std::cout << "\n=== SONUC: " << pass << " gecti, " << fail << " kaldi ===\n" << std::endl;
+    }
+
+    // ---------------- FAZ 5b: ENGINE API TESTI ----------------
+    void runApiTest() {
+        int pass = 0, fail = 0;
+        auto check = [&](bool ok, const std::string& what, const std::string& got) {
+            if (ok) pass++; else fail++;
+            std::cout << (ok ? "  OK   " : "  HATA ") << what;
+            if (!got.empty()) std::cout << "  ->  " << got;
+            std::cout << std::endl;
+            };
+
+        std::cout << "\n=== ENGINE API TESTI (kopru cephesi) ===\n" << std::endl;
+
+        EngineApi api;
+        api.setUseBook(false);
+
+        check(api.sideToMove() == "w", "yeni oyun: sira beyazda", api.sideToMove());
+        check(api.legalMoves().size() == 20, "baslangicta 20 legal hamle",
+            std::to_string(api.legalMoves().size()));
+        check(api.gameStatus() == "ongoing", "durum: ongoing", api.gameStatus());
+        check(api.sanFor("g1f3") == "Nf3", "sanFor(g1f3)", api.sanFor("g1f3"));
+
+        check(api.makeMove("e2e4"), "makeMove(e2e4) kabul", "");
+        check(!api.makeMove("e2e4"), "makeMove(e2e4) ikinci kez reddedilmeli", "");
+        check(!api.makeMove("zzzz"), "makeMove(zzzz) reddedilmeli", "");
+        check(api.sideToMove() == "b", "sira siyaha gecti", api.sideToMove());
+
+        api.makeMove("e7e5");
+        api.makeMove("g1f3");
+        std::vector<std::string> hist = api.moveHistorySan();
+        bool histOk = (hist.size() == 3 && hist[0] == "e4" && hist[1] == "e5" && hist[2] == "Nf3");
+        check(histOk, "SAN gecmisi: e4 e5 Nf3",
+            histOk ? "" : (hist.size() > 2 ? hist[0] + " " + hist[1] + " " + hist[2] : "eksik"));
+
+        check(api.undo(), "undo calisiyor", "");
+        check(api.moveHistorySan().size() == 2, "gecmis 2'ye dustu",
+            std::to_string(api.moveHistorySan().size()));
+
+        // Mat pozisyonu
+        api.newGame("6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1");
+        std::string mv = api.bestMove(1000, 4);
+        check(mv == "a1a8", "mat pozisyonunda dogru hamle", mv);
+        api.makeMove("a1a8");
+        check(api.gameStatus() == "checkmate", "durum: checkmate", api.gameStatus());
+
+        // Pat pozisyonu
+        api.newGame("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1");
+        check(api.gameStatus() == "stalemate", "durum: stalemate", api.gameStatus());
+
+        // Yetersiz materyal
+        api.newGame("8/8/8/4k3/8/8/4KB2/8 w - - 0 1");
+        check(api.gameStatus() == "draw-material", "durum: draw-material", api.gameStatus());
+
+        // Gecersiz FEN reddedilmeli
+        check(!api.newGame("8/8/8/4k3/8/8/8/8 w - - 0 1"), "sahsiz FEN reddedilmeli", "");
+
+        std::cout << "\n=== SONUC: " << pass << " gecti, " << fail << " kaldi ===\n" << std::endl;
+    }
+
+    // ---------------- FAZ 5b: SEVIYE TESTI ----------------
+    void runLevelTest() {
+        std::cout << "\n=== SEVIYE TESTI ===" << std::endl;
+        std::cout << "Olcut: secilen hamle EN IYI hamleden kac santipiyon kotu?" << std::endl;
+        std::cout << "(Sakin bir pozisyonda farkli hamle oynamak zayiflik degildir;" << std::endl;
+        std::cout << " asil onemli olan ne kadar kaybettigidir.)\n" << std::endl;
+
+        // Taktik firsat iceren bir pozisyon: en iyi hamle belirgin sekilde daha iyi
+        const char* fens[] = {
+            "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
+            "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
+            "rnbqkb1r/pp2pppp/3p1n2/2pP4/8/2N5/PPP1PPPP/R1BQKBNR w KQkq - 0 4"
+        };
+
+        std::cout << "  seviye | derinlik | ort. kayip (cp) | en kotu kayip" << std::endl;
+        std::cout << "  -------+----------+-----------------+--------------" << std::endl;
+
+        int levels[] = { 0, 5, 10, 15, 18, 20 };
+        for (int k = 0; k < 6; k++) {
+            EngineApi api;
+            api.setUseBook(false);
+            api.setSkillLevel(levels[k]);
+
+            long long totalLoss = 0; int worst = 0; int depth = 0; int trials = 0;
+
+            for (int f = 0; f < 3; f++) {
+                for (int t = 0; t < 6; t++) {
+                    api.newGame(fens[f]);
+                    api.bestMove(600, 64);
+                    int loss = api.lastSkillLoss();
+                    totalLoss += loss;
+                    if (loss > worst) worst = loss;
+                    depth = api.lastDepth();
+                    trials++;
+                }
+            }
+
+            std::cout << "  " << std::setw(6) << levels[k]
+                << " | " << std::setw(8) << depth
+                << " | " << std::setw(15) << (totalLoss / (trials ? trials : 1))
+                << " | " << std::setw(12) << worst << std::endl;
+        }
+        std::cout << "\nBeklenen: seviye yukseldikce hem derinlik artar hem kayip duser." << std::endl;
+        std::cout << "Seviye 20'de kayip SIFIR olmalidir (tam guc).\n" << std::endl;
     }
 
     // ---------------- BENCH ----------------

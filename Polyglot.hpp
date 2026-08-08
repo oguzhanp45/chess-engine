@@ -21,6 +21,10 @@ public:
     std::function<void(const std::string&)> onInfo;
 
     bool load(const std::string& path);   // basarisiz olursa bir daha denemez
+
+    // FAZ 5b: Android'de kitap dosya sisteminde degil asset icinde olur;
+    // kopru byte dizisini dogrudan buraya verir.
+    bool loadFromMemory(const unsigned char* bytes, size_t size);
     bool isLoaded() const { return loaded; }
     void unload() { data.clear(); loaded = false; loadFailed = false; }
 
