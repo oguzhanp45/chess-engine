@@ -37,7 +37,7 @@ Makefile
 .DS_Store
 Thumbs.db
 
-# Visiual Studio proje dosyalari (Cmakelists.txt yeterli)
+# Visual Studio proje dosyalari (Cmakelists.txt yeterli)
 *.sln
 *.vcxproj
 *.vcxproj.user
