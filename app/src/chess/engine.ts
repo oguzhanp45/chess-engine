@@ -1,50 +1,78 @@
 /**
- * Motor sözleşmesi. Metot adları C++ tarafındaki EngineApi ile birebir aynı.
- * Bu dosyada uygulama YOK, sadece tip var. Adım 3'te NativeEngine bu
- * arayüzü uygulayacak ve MockEngine silinecek.
+ * KONUM: app/src/chess/engine.ts   (üzerine yaz)
  *
- * Hepsi Promise döndürüyor: Adım 4'te bestMove arka plan thread'ine taşınınca
- * çağıran kodun değişmemesi için.
+ * Motor sözleşmesi. EngineApi'nin beş ayrı sorgusu tek snapshot() altında
+ * toplandı — köprü geçiş sayısını azaltmak için.
  */
 
 export type Side = 'w' | 'b';
 
-export interface ChessEngine {
-  newGame(fen?: string): Promise<void>;
-  getFen(): Promise<string>;
-  sideToMove(): Promise<Side>;
-  legalMoves(): Promise<string[]>;
-  gameStatus(): Promise<string>;
-  makeMove(uci: string): Promise<boolean>;
-  undo(): Promise<boolean>;
-  sanFor(uci: string): Promise<string>;
-  moveHistorySan(): Promise<string[]>;
-  bestMove(timeMs: number): Promise<string>;
-  stop(): Promise<void>;
-  setSkillLevel(level: number): Promise<void>;
-  setHashSizeMB(mb: number): Promise<void>;
-}
+/** EngineApi.gameStatus() değerleri. */
+export type Status =
+  | 'ongoing'
+  | 'checkmate'
+  | 'stalemate'
+  | 'draw-fifty'
+  | 'draw-repetition'
+  | 'draw-material';
 
-/** Ekranın motordan okuduğu her şey tek nesnede. */
 export type Snapshot = {
   fen: string;
   sideToMove: Side;
-  legalMoves: string[];
-  historySan: string[];
-  status: string;
+  status: Status;
+  inCheck: boolean;
+  legalMoves: string[];   // ['e2e4', 'e7e8q', ...]
+  historySan: string[];   // ['e4', 'Nf3', 'O-O', ...]
 };
 
-/**
- * Tek okuma noktası. Her hamleden sonra bu çağrılır, dönen nesne state'e
- * yazılır. Ekran kendi başına pozisyon hesaplamaz; motor tek doğru kaynaktır.
- */
-export async function readSnapshot(engine: ChessEngine): Promise<Snapshot> {
-  const [fen, sideToMove, legalMoves, historySan, status] = await Promise.all([
-    engine.getFen(),
-    engine.sideToMove(),
-    engine.legalMoves(),
-    engine.moveHistorySan(),
-    engine.gameStatus(),
-  ]);
-  return { fen, sideToMove, legalMoves, historySan, status };
+export type SearchInfo = {
+  score: number;
+  depth: number;
+  nodes: number;
+};
+
+export interface ChessEngine {
+  newGame(fen?: string): Promise<boolean>;
+  snapshot(): Promise<Snapshot>;
+
+  makeMove(uci: string): Promise<boolean>;
+  undo(): Promise<boolean>;
+  sanFor(uci: string): Promise<string>;
+
+  bestMove(timeMs: number, maxDepth?: number): Promise<string>;
+  stop(): Promise<void>;
+
+  setSkillLevel(level: number): Promise<void>;
+  getSkillLevel(): Promise<number>;
+  setHashSizeMB(mb: number): Promise<void>;
+  lastSearchInfo(): Promise<SearchInfo>;
+}
+
+export const EMPTY_SNAPSHOT: Snapshot = {
+  fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+  sideToMove: 'w',
+  status: 'ongoing',
+  inCheck: false,
+  legalMoves: [],
+  historySan: [],
+};
+
+/** Durum kodunu ekranda gösterilecek metne çevirir. */
+export function statusText(status: Status, side: Side): string {
+  switch (status) {
+    case 'ongoing':
+      return 'Oyun sürüyor';
+    case 'checkmate':
+      return side === 'w' ? 'Mat — siyah kazandı' : 'Mat — beyaz kazandı';
+    case 'stalemate':
+      return 'Pat — beraberlik';
+    case 'draw-fifty':
+      return 'Beraberlik — 50 hamle kuralı';
+    case 'draw-repetition':
+      return 'Beraberlik — üç kez tekrar';
+    case 'draw-material':
+      return 'Beraberlik — yetersiz materyal';
+    default:
+      return String(status);
+  }
 }

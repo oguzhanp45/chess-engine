@@ -46,7 +46,7 @@ private:
     // siralamasi killerMoves[64]'e, yani dizi disina erisiyordu.
     Move killerMoves[MAX_PLY][2];
 
-    int historyMoves[2][8][8][8][8] = { 0 };
+    int historyMoves[2][8][8][8][8] = {};
 
     Move counterMoveTable[8][8][8][8] = {};
 

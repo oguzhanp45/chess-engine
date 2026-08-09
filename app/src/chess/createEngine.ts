@@ -1,19 +1,15 @@
 /**
- * Uygulamanın motoru buradan alır.
+ * KONUM: app/src/chess/createEngine.ts   (üzerine yaz)
  *
- * ADIM 3'TE DEĞİŞECEK TEK DOSYA:
- *   import { NativeEngine } from './nativeEngine';
- *   export function createEngine(): ChessEngine { return new NativeEngine(); }
- *
- * Ekran kodunda hiçbir satır değişmeyecek.
+ * Adım 3'te değişen tek seçim noktası. mockEngine.ts artık kullanılmıyor
+ * ve silinecek.
  */
 
 import type { ChessEngine } from './engine';
-import { MockEngine } from './mockEngine';
+import { NativeEngine } from '../native/nativeEngine';
 
-/** Arayüzde uyarı rozeti göstermek için. Adım 3'te false olacak. */
-export const ENGINE_IS_MOCK = true;
+export const ENGINE_IS_MOCK = false;
 
 export function createEngine(): ChessEngine {
-  return new MockEngine();
+  return new NativeEngine();
 }

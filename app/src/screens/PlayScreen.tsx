@@ -1,11 +1,13 @@
 /**
- * Oyun ekranı. Tüm state burada; Board ve Square hiçbir şey saklamaz.
+ * KONUM: app/src/screens/PlayScreen.tsx   (üzerine yaz)
  *
- * Akış tek yönlü:
- *   dokunuş -> engine.makeMove() -> readSnapshot() -> setState -> çizim
- *
- * Ekran pozisyonu kendi başına hesaplamaz. Motor tek doğru kaynaktır;
- * aksi halde C++ ile JS pozisyonları sessizce ayrışır.
+ * Artık gerçek motor bağlı. Değişenler:
+ *  - readSnapshot yerine engine.snapshot() (tek köprü geçişi)
+ *  - sadece geçerli hamlesi olan taş seçilebiliyor
+ *  - terfi: iki dokunuş 'e7e8' verir, motor 'e7e8q' bekler; ekleniyor
+ *  - oyun bitince hamle kabul edilmiyor
+ *  - "Motor oynasın" düğmesi: bestMove testi. UYARI: arayüzü dondurur,
+ *    Adım 4'ün varlık sebebi bu.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -19,71 +21,100 @@ import {
 } from 'react-native';
 import Board from '../components/Board';
 import { theme } from '../theme';
-import { createEngine, ENGINE_IS_MOCK } from '../chess/createEngine';
-import { readSnapshot, type ChessEngine, type Snapshot } from '../chess/engine';
-import { START_FEN, fenToBoard, squareToIndex } from '../chess/fen';
+import { createEngine } from '../chess/createEngine';
+import {
+  EMPTY_SNAPSHOT,
+  statusText,
+  type ChessEngine,
+  type Snapshot,
+} from '../chess/engine';
+import { fenToBoard, squareToIndex } from '../chess/fen';
 import { nativeVersion } from '../native/nativeInfo';
 
-const EMPTY: Snapshot = {
-  fen: START_FEN,
-  sideToMove: 'w',
-  legalMoves: [],
-  historySan: [],
-  status: 'ongoing',
-};
+const SEARCH_MS = 1000;
 
 export default function PlayScreen() {
   const { width, height } = useWindowDimensions();
 
-  // Motor nesnesi render'lar arasında aynı kalmalı.
   const engineRef = useRef<ChessEngine | null>(null);
   if (engineRef.current === null) engineRef.current = createEngine();
   const engine = engineRef.current;
 
-  const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY);
+  const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const [selected, setSelected] = useState<string | null>(null);
   const [lastMove, setLastMove] = useState<{ from: string; to: string } | null>(null);
   const [flipped, setFlipped] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
   const [bridge] = useState(nativeVersion);
 
   const refresh = useCallback(async () => {
-    setSnapshot(await readSnapshot(engine));
+    try {
+      setSnapshot(await engine.snapshot());
+    } catch (e) {
+      setNote(`HATA snapshot: ${String(e)}`);
+    }
   }, [engine]);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      await engine.newGame(START_FEN);
-      const next = await readSnapshot(engine);
-      if (alive) setSnapshot(next);
+      try {
+        await engine.newGame('');
+        const next = await engine.snapshot();
+        if (alive) setSnapshot(next);
+      } catch (e) {
+        if (alive) setNote(`HATA baslangic: ${String(e)}`);
+      }
     })();
-    // Bileşen kaldırılırsa geç gelen cevabı yok say.
     return () => { alive = false; };
   }, [engine]);
 
   const newGame = useCallback(async () => {
     setSelected(null);
     setLastMove(null);
-    await engine.newGame(START_FEN);
+    setNote('');
+    await engine.newGame('');
     await refresh();
   }, [engine, refresh]);
 
   const undo = useCallback(async () => {
     setSelected(null);
     setLastMove(null);
+    setNote('');
     if (await engine.undo()) await refresh();
   }, [engine, refresh]);
 
+  /** Motor bir hamle oynasın. Arama bitene kadar arayüz donar. */
+  const engineMove = useCallback(async () => {
+    if (busy || snapshot.status !== 'ongoing') return;
+    setBusy(true);
+    setNote('Motor düşünüyor...');
+    try {
+      const uci = await engine.bestMove(SEARCH_MS);
+      if (uci && (await engine.makeMove(uci))) {
+        setLastMove({ from: uci.slice(0, 2), to: uci.slice(2, 4) });
+        setSelected(null);
+        await refresh();
+      }
+      const info = await engine.lastSearchInfo();
+      const nps = info.nodes > 0 ? Math.round(info.nodes / (SEARCH_MS / 1000)) : 0;
+      setNote(`derinlik ${info.depth} · skor ${info.score} · ${nps.toLocaleString('tr-TR')} d/sn`);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, engine, refresh, snapshot.status]);
+
   const onSquarePress = useCallback(
     async (square: string) => {
-      if (busy) return;
+      if (busy || snapshot.status !== 'ongoing') return;
 
-      const board = fenToBoard(snapshot.fen);
-      const piece = board[squareToIndex(square)];
+      // Sadece geçerli hamlesi olan kareler seçilebilir. Böylece rakip taşı
+      // veya kıpırdayamayan taş seçilemez.
+      const canOriginate = snapshot.legalMoves.some(m => m.startsWith(square));
 
       if (selected === null) {
-        if (piece !== null) setSelected(square);
+        if (canOriginate) setSelected(square);
         return;
       }
       if (selected === square) {
@@ -91,23 +122,30 @@ export default function PlayScreen() {
         return;
       }
 
-      // TODO Adım 6: piyon son sıraya varıyorsa terfi harfi eklenecek ('e7e8q').
-      const uci = selected + square;
+      // Terfi: legalMoves 'e7e8q' verir, iki dokunuş 'e7e8' üretir.
+      // Şimdilik vezir. Adım 6'da taş seçme penceresi gelecek.
+      const plain = selected + square;
+      let uci = plain;
+      if (!snapshot.legalMoves.includes(plain)) {
+        const promo = snapshot.legalMoves.find(m => m.startsWith(plain) && m.length === 5);
+        if (promo) uci = plain + 'q';
+      }
 
       setBusy(true);
       try {
         if (await engine.makeMove(uci)) {
           setLastMove({ from: selected, to: square });
           setSelected(null);
+          setNote('');
           await refresh();
         } else {
-          setSelected(piece !== null ? square : null);
+          setSelected(canOriginate ? square : null);
         }
       } finally {
         setBusy(false);
       }
     },
-    [busy, engine, refresh, selected, snapshot.fen],
+    [busy, engine, refresh, selected, snapshot.legalMoves, snapshot.status],
   );
 
   const isLandscape = width > height;
@@ -117,6 +155,8 @@ export default function PlayScreen() {
       ? Math.min(height - pad * 2, (width - pad * 3) * 0.62)
       : Math.min(width - pad * 2, (height - pad * 2) * 0.68),
   );
+
+  const over = snapshot.status !== 'ongoing';
 
   return (
     <View style={[styles.root, isLandscape ? styles.rowLayout : styles.colLayout]}>
@@ -131,24 +171,29 @@ export default function PlayScreen() {
       />
 
       <View style={[styles.panel, isLandscape ? styles.panelSide : styles.panelBottom]}>
-        {ENGINE_IS_MOCK && (
-          <Text style={styles.badge}>Sahte motor — kural denetimi yok (Adım 3)</Text>
-        )}
-
         <Text style={styles.dim}>Köprü: {bridge}</Text>
 
         <Text style={styles.turn}>
           Sıra: {snapshot.sideToMove === 'w' ? 'Beyaz' : 'Siyah'}
+          {snapshot.inCheck ? '  ·  ŞAH!' : ''}
         </Text>
-        <Text style={styles.dim}>Durum: {snapshot.status}</Text>
+
+        <Text style={over ? styles.over : styles.dim}>
+          {statusText(snapshot.status, snapshot.sideToMove)}
+        </Text>
+
+        {note !== '' && <Text style={styles.note}>{note}</Text>}
 
         <View style={styles.buttons}>
           <Button label="Yeni oyun" onPress={newGame} />
           <Button label="Geri al" onPress={undo} />
           <Button label="Çevir" onPress={() => setFlipped(f => !f)} />
+          <Button label="Motor oynasın" onPress={engineMove} />
         </View>
 
-        <Text style={styles.section}>Hamleler</Text>
+        <Text style={styles.section}>
+          Hamleler ({snapshot.legalMoves.length} geçerli hamle)
+        </Text>
         <ScrollView style={styles.historyBox}>
           <Text style={styles.historyText}>
             {snapshot.historySan.length > 0
@@ -161,14 +206,13 @@ export default function PlayScreen() {
   );
 }
 
-/** ['e2e4','e7e5'] -> '1. e2e4 e7e5' */
+/** ['e4','e5','Nf3'] -> '1. e4 e5   2. Nf3' */
 function formatHistory(moves: string[]): string {
-  const lines: string[] = [];
+  const out: string[] = [];
   for (let i = 0; i < moves.length; i += 2) {
-    const no = i / 2 + 1;
-    lines.push(`${no}. ${moves[i]}${moves[i + 1] ? ' ' + moves[i + 1] : ''}`);
+    out.push(`${i / 2 + 1}. ${moves[i]}${moves[i + 1] ? ' ' + moves[i + 1] : ''}`);
   }
-  return lines.join('   ');
+  return out.join('   ');
 }
 
 function Button({ label, onPress }: { label: string; onPress: () => void }) {
@@ -202,9 +246,10 @@ const styles = StyleSheet.create({
   },
   panelBottom: { alignSelf: 'stretch', flexShrink: 1 },
   panelSide: { flex: 1, maxWidth: 340, alignSelf: 'stretch' },
-  badge: { color: theme.warn, fontSize: 12 },
   turn: { color: theme.text, fontSize: 20, fontWeight: '700' },
   dim: { color: theme.textDim, fontSize: 13 },
+  over: { color: theme.warn, fontSize: 15, fontWeight: '700' },
+  note: { color: theme.warn, fontSize: 12 },
   section: {
     color: theme.textDim,
     fontSize: 11,

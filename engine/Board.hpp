@@ -5,7 +5,7 @@
 
 class ChessBoard {
 private:
-    int board[8][8] = { 0 };
+    int board[8][8] = {};
 
 public:
     int currentPlayer = 1;

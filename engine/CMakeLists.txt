@@ -37,13 +37,21 @@ target_include_directories(chessengine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(chessengine PUBLIC Threads::Threads)
 
 # --- UCI uygulamasi ---
-add_executable(engine main.cpp)
-target_link_libraries(engine PRIVATE chessengine)
+# Android'de gereksiz: mobil taraf chessengine kutuphanesini baglar,
+# main.cpp'yi kullanmaz.
+if(NOT ANDROID)
+    add_executable(engine main.cpp)
+    target_link_libraries(engine PRIVATE chessengine)
+endif()
 
 if(MSVC)
     target_compile_options(chessengine PRIVATE /O2 /W3)
-    target_compile_options(engine      PRIVATE /O2 /W3)
+    if(NOT ANDROID)
+        target_compile_options(engine PRIVATE /O2 /W3)
+    endif()
 else()
     target_compile_options(chessengine PRIVATE -O3 -Wall -Wextra)
-    target_compile_options(engine      PRIVATE -O3 -Wall -Wextra)
+    if(NOT ANDROID)
+        target_compile_options(engine PRIVATE -O3 -Wall -Wextra)
+    endif()
 endif()
