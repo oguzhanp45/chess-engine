@@ -1,15 +1,26 @@
+/**
+ * Uygulama kökü. Adım 6'da burası sekmeli navigasyona dönüşecek
+ * (Oyna / Bulmaca / Öğren / Profil).
+ */
+
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Platform, StatusBar, StyleSheet, View } from 'react-native';
+import PlayScreen from './src/screens/PlayScreen';
+import { theme } from './src/theme';
 
 export default function App() {
   return (
     <View style={styles.root}>
-      <Text style={styles.title}>Satranç</Text>
+      <StatusBar barStyle="light-content" backgroundColor={theme.bg} />
+      <PlayScreen />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#161513' },
-  title: { color: '#EDEAE2', fontSize: 32 },
+  root: {
+    flex: 1,
+    backgroundColor: theme.bg,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0,
+  },
 });
