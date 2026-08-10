@@ -1,17 +1,15 @@
-// KONUM: app/shared/NativeChessEngine.cpp   (mevcut dosyanın üzerine yaz)
+// KONUM: app/shared/NativeChessEngine.cpp   (üzerine yaz)
 
 #include "NativeChessEngine.h"
 
-#include <string>
+#include <sstream>
+#include <utility>
 #include <vector>
 
 namespace facebook::react {
 
 namespace {
 
-// FEN, UCI ve SAN metinlerinde JSON'u bozacak karakter beklenmiyor ama
-// kaçış yapmamak, ileride buraya yorum/hata metni eklendiğinde sessiz
-// bir bozulma demek. Ucuz sigorta.
 std::string esc(const std::string& in) {
   std::string out;
   out.reserve(in.size() + 8);
@@ -32,7 +30,7 @@ std::string esc(const std::string& in) {
 
 std::string jsonArray(const std::vector<std::string>& items) {
   std::string out = "[";
-  for (size_t i = 0; i < items.size(); ++i) {
+  for (std::size_t i = 0; i < items.size(); ++i) {
     if (i > 0) out += ',';
     out += '"';
     out += esc(items[i]);
@@ -46,20 +44,60 @@ std::string jsonArray(const std::vector<std::string>& items) {
 
 NativeChessEngine::NativeChessEngine(std::shared_ptr<CallInvoker> jsInvoker)
     : NativeChessEngineCxxSpec(std::move(jsInvoker)) {
-  // Mobilde bellek sınırlı. Masaüstü varsayılanı tabletde sorun çıkarabilir.
+  // Mobilde bellek sınırlı; masaüstü varsayılanı tablette sorun çıkarabilir.
   engine_.setHashSizeMB(32);
+
+  // Arama sırasındaki "info depth ..." satırları buraya akar. Bu geri çağırım
+  // ARAMA İŞ PARÇACIĞINDAN çalışır — içeride sadece kilitli alan güncellenir.
+  engine_.setInfoCallback([this](const std::string& line) { onInfoLine(line); });
+
   engine_.newGame("");
+  rebuildSnapshot();
 }
 
-std::string NativeChessEngine::nativeVersion(jsi::Runtime&) {
-  return "chess-native 0.2 / EngineApi bagli";
+NativeChessEngine::~NativeChessEngine() {
+  engine_.stop();
+  joinWorker();
 }
 
-bool NativeChessEngine::newGame(jsi::Runtime&, std::string fen) {
-  return engine_.newGame(fen);
+void NativeChessEngine::joinWorker() {
+  if (worker_.joinable()) worker_.join();
 }
 
-std::string NativeChessEngine::snapshot(jsi::Runtime&) {
+/**
+ * "info depth 7 score cp 59 nodes 126661 time 114 nps 1111061 pv d2d4"
+ * Sadece ihtiyacımız olan dört alanı çekiyoruz. Beklenmeyen biçim gelirse
+ * sessizce yok sayılır — arama bu yüzden bozulmamalı.
+ */
+void NativeChessEngine::onInfoLine(const std::string& line) {
+  std::istringstream in(line);
+  std::string token;
+  int depth = -1;
+  int score = 0;
+  bool mate = false;
+  long long nodes = -1;
+
+  while (in >> token) {
+    if (token == "depth") {
+      in >> depth;
+    } else if (token == "score") {
+      std::string kind;
+      in >> kind;
+      in >> score;
+      mate = (kind == "mate");
+    } else if (token == "nodes") {
+      in >> nodes;
+    }
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (depth >= 0) liveDepth_ = depth;
+  if (nodes >= 0) liveNodes_ = nodes;
+  liveScore_ = score;
+  liveMate_ = mate;
+}
+
+void NativeChessEngine::rebuildSnapshot() {
   const std::string fen = engine_.getFen();
   const std::string side = engine_.sideToMove();
   const std::string status = engine_.gameStatus();
@@ -75,30 +113,109 @@ std::string NativeChessEngine::snapshot(jsi::Runtime&) {
   out += "\"legal\":" + jsonArray(legal) + ",";
   out += "\"history\":" + jsonArray(history);
   out += "}";
-  return out;
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  cachedSnapshot_ = out;
+}
+
+std::string NativeChessEngine::nativeVersion(jsi::Runtime&) {
+  return "chess-native 0.3 / arka plan arama";
+}
+
+bool NativeChessEngine::newGame(jsi::Runtime&, std::string fen) {
+  if (searching_.load()) return false;
+  joinWorker();
+  const bool ok = engine_.newGame(fen);
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    resultMove_.clear();
+    liveDepth_ = 0;
+    liveScore_ = 0;
+    liveNodes_ = 0;
+    liveMate_ = false;
+  }
+  rebuildSnapshot();
+  return ok;
+}
+
+std::string NativeChessEngine::snapshot(jsi::Runtime&) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return cachedSnapshot_;
 }
 
 bool NativeChessEngine::makeMove(jsi::Runtime&, std::string uci) {
-  return engine_.makeMove(uci);
+  if (searching_.load()) return false;
+  joinWorker();
+  const bool ok = engine_.makeMove(uci);
+  if (ok) rebuildSnapshot();
+  return ok;
 }
 
 bool NativeChessEngine::undo(jsi::Runtime&) {
-  return engine_.undo();
+  if (searching_.load()) return false;
+  joinWorker();
+  const bool ok = engine_.undo();
+  if (ok) rebuildSnapshot();
+  return ok;
 }
 
 std::string NativeChessEngine::sanFor(jsi::Runtime&, std::string uci) {
+  if (searching_.load()) return "";
   return engine_.sanFor(uci);
 }
 
-std::string NativeChessEngine::bestMove(
+void NativeChessEngine::startSearch(
     jsi::Runtime&,
     double timeMs,
     double maxDepth) {
+  if (searching_.load()) return;
+  joinWorker(); // önceki arama bitmişse iş parçacığını topla
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    resultMove_.clear();
+    liveDepth_ = 0;
+    liveScore_ = 0;
+    liveNodes_ = 0;
+    liveMate_ = false;
+  }
+
   const int ms = static_cast<int>(timeMs);
   const int depth = maxDepth > 0 ? static_cast<int>(maxDepth) : 64;
-  // Bloke eder: JS thread'i bu süre boyunca durur. Adım 4'te iş parçacığına
-  // taşınacak; o zaman burası değişmeyecek, çağıran taraf değişecek.
-  return engine_.bestMove(ms, depth);
+
+  searching_.store(true);
+  worker_ = std::thread([this, ms, depth]() {
+    std::string move;
+    try {
+      move = engine_.bestMove(ms, depth);
+    } catch (...) {
+      move.clear(); // arama içindeki bir hata uygulamayı çökertmesin
+    }
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      resultMove_ = move;
+      liveDepth_ = engine_.lastDepth();
+      liveScore_ = engine_.lastScore();
+      liveNodes_ = engine_.lastNodes();
+    }
+    // Bayrağı EN SON indir: JS bunu görünce sonucu okumaya başlayacak.
+    searching_.store(false);
+  });
+}
+
+std::string NativeChessEngine::searchState(jsi::Runtime&) {
+  const bool running = searching_.load();
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::string out = "{";
+  out += std::string("\"running\":") + (running ? "true" : "false") + ",";
+  out += "\"move\":\"" + esc(resultMove_) + "\",";
+  out += "\"depth\":" + std::to_string(liveDepth_) + ",";
+  out += "\"score\":" + std::to_string(liveScore_) + ",";
+  out += "\"nodes\":" + std::to_string(liveNodes_) + ",";
+  out += std::string("\"mate\":") + (liveMate_ ? "true" : "false");
+  out += "}";
+  return out;
 }
 
 void NativeChessEngine::stop(jsi::Runtime&) {
@@ -106,6 +223,7 @@ void NativeChessEngine::stop(jsi::Runtime&) {
 }
 
 void NativeChessEngine::setSkillLevel(jsi::Runtime&, double level) {
+  if (searching_.load()) return;
   engine_.setSkillLevel(static_cast<int>(level));
 }
 
@@ -114,16 +232,8 @@ double NativeChessEngine::getSkillLevel(jsi::Runtime&) {
 }
 
 void NativeChessEngine::setHashSizeMB(jsi::Runtime&, double mb) {
+  if (searching_.load()) return;
   engine_.setHashSizeMB(static_cast<int>(mb));
-}
-
-std::string NativeChessEngine::lastSearchInfo(jsi::Runtime&) {
-  std::string out = "{";
-  out += "\"score\":" + std::to_string(engine_.lastScore()) + ",";
-  out += "\"depth\":" + std::to_string(engine_.lastDepth()) + ",";
-  out += "\"nodes\":" + std::to_string(engine_.lastNodes());
-  out += "}";
-  return out;
 }
 
 } // namespace facebook::react

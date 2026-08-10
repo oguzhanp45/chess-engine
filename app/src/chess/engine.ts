@@ -1,13 +1,12 @@
 /**
  * KONUM: app/src/chess/engine.ts   (üzerine yaz)
  *
- * Motor sözleşmesi. EngineApi'nin beş ayrı sorgusu tek snapshot() altında
- * toplandı — köprü geçiş sayısını azaltmak için.
+ * bestMove hâlâ Promise döndürüyor — ekran kodu değişmedi. Arkasında artık
+ * yoklama var; ek olarak onProgress ile arama sürerken canlı bilgi geliyor.
  */
 
 export type Side = 'w' | 'b';
 
-/** EngineApi.gameStatus() değerleri. */
 export type Status =
   | 'ongoing'
   | 'checkmate'
@@ -21,14 +20,15 @@ export type Snapshot = {
   sideToMove: Side;
   status: Status;
   inCheck: boolean;
-  legalMoves: string[];   // ['e2e4', 'e7e8q', ...]
-  historySan: string[];   // ['e4', 'Nf3', 'O-O', ...]
+  legalMoves: string[];
+  historySan: string[];
 };
 
-export type SearchInfo = {
-  score: number;
+export type SearchProgress = {
   depth: number;
+  score: number;   // santipiyon, veya mate ise hamle sayısı
   nodes: number;
+  mate: boolean;
 };
 
 export interface ChessEngine {
@@ -39,13 +39,19 @@ export interface ChessEngine {
   undo(): Promise<boolean>;
   sanFor(uci: string): Promise<string>;
 
-  bestMove(timeMs: number, maxDepth?: number): Promise<string>;
+  /** Arka planda arar. Arayüz donmaz. onProgress ~80 ms'de bir çağrılır. */
+  bestMove(
+    timeMs: number,
+    maxDepth?: number,
+    onProgress?: (p: SearchProgress) => void,
+  ): Promise<string>;
+
+  /** Aramayı keser. bestMove o ana kadarki en iyi hamleyle döner. */
   stop(): Promise<void>;
 
   setSkillLevel(level: number): Promise<void>;
   getSkillLevel(): Promise<number>;
   setHashSizeMB(mb: number): Promise<void>;
-  lastSearchInfo(): Promise<SearchInfo>;
 }
 
 export const EMPTY_SNAPSHOT: Snapshot = {
@@ -57,7 +63,6 @@ export const EMPTY_SNAPSHOT: Snapshot = {
   historySan: [],
 };
 
-/** Durum kodunu ekranda gösterilecek metne çevirir. */
 export function statusText(status: Status, side: Side): string {
   switch (status) {
     case 'ongoing':
@@ -75,4 +80,10 @@ export function statusText(status: Status, side: Side): string {
     default:
       return String(status);
   }
+}
+
+/** Skoru okunur metne çevirir. */
+export function scoreText(p: SearchProgress): string {
+  if (p.mate) return `mat ${Math.abs(p.score)}`;
+  return (p.score >= 0 ? '+' : '') + (p.score / 100).toFixed(2);
 }

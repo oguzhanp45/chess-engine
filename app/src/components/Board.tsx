@@ -1,97 +1,295 @@
 /**
- * Tahta. 8 satır açıkça çizilir — flexWrap kullanılmaz.
+ * KONUM: app/src/components/Board.tsx   (üzerine yaz)
  *
- * Neden: flexWrap, üst kutunun iç genişliğine bağlıdır. Kenarlık, dolgu veya
- * yuvarlama eklendiğinde iç genişlik birkaç piksel azalır ve 8. kare alt
- * satıra düşer. Satırları elle çizince bu risk tamamen ortadan kalkar.
- *
- * Çerçeve ayrı bir View: kenarlık ızgaranın DIŞINDA kalsın diye.
+ * DÜZELTME (dokunma ile sürükleme çakışması):
+ *  - Sürükleme görseli artık parmak DRAG_THRESHOLD kadar hareket edene kadar
+ *    başlamıyor. Basit dokunuşta taş yerinden oynamıyor.
+ *  - canDrag saf bir soru: sadece true/false döner, durum değiştirmez.
+ *    Seçimi Board kendi içinde gösteriyor (sürükleme sırasında dragFrom,
+ *    diğer zamanlarda selected).
  */
 
-import React, { useMemo } from 'react';
-import { StyleSheet, View } from 'react-native';
-import Square from './Square';
+import React, { useMemo, useRef, useState } from 'react';
+import {
+  Animated,
+  PanResponder,
+  StyleSheet,
+  View,
+  type LayoutChangeEvent,
+} from 'react-native';
+import BoardSquares from './BoardSquares';
+import BoardPieces from './BoardPieces';
+import PieceView from './PieceView';
 import { theme } from '../theme';
-import { fenToBoard, indexToSquare, isDarkSquare } from '../chess/fen';
+import { fenToBoard, squareToIndex } from '../chess/fen';
+import { squareToXY, xyToSquare, type Geometry } from '../chess/geometry';
+
+const DRAG_THRESHOLD = 8;
 
 type Props = {
   fen: string;
-  size: number;            // çerçeve dahil hedef kenar uzunluğu
+  size: number;
   selected: string | null;
   legalMoves: string[];
   lastMove?: { from: string; to: string } | null;
+  animating?: { from: string; to: string } | null;
+  checkSquare?: string | null;
   flipped?: boolean;
   showCoords?: boolean;
-  onSquarePress: (square: string) => void;
+  enabled?: boolean;
+
+  onTap: (square: string) => void;
+  /** SAF: sadece cevap verir, durum değiştirmez. */
+  canDrag: (square: string) => boolean;
+  onDrop: (from: string, to: string | null) => void;
 };
 
-const FRAME = 6;
-
 export default function Board({
-  fen, size, selected, legalMoves, lastMove = null,
-  flipped = false, showCoords = true, onSquarePress,
+  fen, size, selected, legalMoves, lastMove = null, animating = null,
+  checkSquare = null, flipped = false, showCoords = true, enabled = true,
+  onTap, canDrag, onDrop,
 }: Props) {
-  // Kare boyutu tam sayı olmalı, yoksa satırlar arasında yarım piksel boşluk çıkar.
-  const squareSize = Math.floor((size - FRAME * 2) / 8);
+  const frame = theme.frame;
+  const square = Math.floor((size - frame * 2) / 8);
+  const boardPx = square * 8;
 
+  const geometry: Geometry = useMemo(() => ({ square, flipped }), [square, flipped]);
   const board = useMemo(() => fenToBoard(fen), [fen]);
 
+  const [dragFrom, setDragFrom] = useState<string | null>(null);
+  const dragPos = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+
+  // Vurgu ve hedef noktaları: sürükleniyorsa sürüklenen kare, değilse seçili kare.
+  const highlightFrom = dragFrom ?? selected;
+
   const targets = useMemo(() => {
-    if (selected === null) return new Set<string>();
+    if (highlightFrom === null) return new Set<string>();
     const set = new Set<string>();
-    for (const move of legalMoves) {
-      if (move.slice(0, 2) === selected) set.add(move.slice(2, 4));
+    for (const m of legalMoves) {
+      if (m.slice(0, 2) === highlightFrom) set.add(m.slice(2, 4));
     }
     return set;
-  }, [selected, legalMoves]);
+  }, [highlightFrom, legalMoves]);
 
-  // 8 satır x 8 indeks. Çevrilmişse sıra tersine döner.
-  const rows = useMemo(() => {
-    const list = Array.from({ length: 64 }, (_, i) => i);
-    if (flipped) list.reverse();
-    const out: number[][] = [];
-    for (let r = 0; r < 8; r++) out.push(list.slice(r * 8, r * 8 + 8));
-    return out;
-  }, [flipped]);
+  // PanResponder içinden okunan değerler ref'te tutulur; state kullanırsak
+  // closure eski değeri görür.
+  const originRef = useRef({ x: 0, y: 0 });
+  const startRef = useRef({ x: 0, y: 0, square: '' });
+  const draggingRef = useRef(false);
+  const dragFromRef = useRef<string | null>(null);
+  const geometryRef = useRef(geometry);
+  geometryRef.current = geometry;
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
+  const canDragRef = useRef(canDrag);
+  canDragRef.current = canDrag;
+
+  const containerRef = useRef<View>(null);
+
+  const onLayout = (_e: LayoutChangeEvent) => {
+    containerRef.current?.measureInWindow((x, y) => {
+      originRef.current = { x: x + frame, y: y + frame };
+    });
+  };
+
+  const beginDrag = (sq: string, lx: number, ly: number) => {
+    const g = geometryRef.current;
+    draggingRef.current = true;
+    dragFromRef.current = sq;
+    setDragFrom(sq);
+    dragPos.setValue({ x: lx - g.square / 2, y: ly - g.square / 2 });
+  };
+
+  const endDrag = () => {
+    draggingRef.current = false;
+    dragFromRef.current = null;
+    setDragFrom(null);
+  };
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+
+        onPanResponderGrant: e => {
+          if (!enabledRef.current) return;
+          const g = geometryRef.current;
+          const lx = e.nativeEvent.pageX - originRef.current.x;
+          const ly = e.nativeEvent.pageY - originRef.current.y;
+          const sq = xyToSquare(lx, ly, g);
+
+          // Sadece not al. Sürükleme görseli HENÜZ başlamıyor.
+          startRef.current = { x: lx, y: ly, square: sq ?? '' };
+          draggingRef.current = false;
+        },
+
+        onPanResponderMove: e => {
+          if (!enabledRef.current) return;
+          const g = geometryRef.current;
+          const lx = e.nativeEvent.pageX - originRef.current.x;
+          const ly = e.nativeEvent.pageY - originRef.current.y;
+
+          if (draggingRef.current) {
+            dragPos.setValue({ x: lx - g.square / 2, y: ly - g.square / 2 });
+            return;
+          }
+
+          const moved =
+            Math.abs(lx - startRef.current.x) > DRAG_THRESHOLD ||
+            Math.abs(ly - startRef.current.y) > DRAG_THRESHOLD;
+
+          if (moved) {
+            const sq = startRef.current.square;
+            if (sq && canDragRef.current(sq)) {
+              beginDrag(sq, lx, ly);
+            } else {
+              // Sürüklenemeyen kareden başladı; bu jest artık dokunuş da sayılmaz.
+              startRef.current.square = '';
+            }
+          }
+        },
+
+        onPanResponderRelease: e => {
+          if (!enabledRef.current) return;
+          const g = geometryRef.current;
+          const lx = e.nativeEvent.pageX - originRef.current.x;
+          const ly = e.nativeEvent.pageY - originRef.current.y;
+          const from = dragFromRef.current;
+          const wasDragging = draggingRef.current;
+
+          endDrag();
+
+          if (wasDragging && from) {
+            onDrop(from, xyToSquare(lx, ly, g));
+          } else if (startRef.current.square) {
+            onTap(startRef.current.square);
+          }
+        },
+
+        onPanResponderTerminate: () => {
+          endDrag();
+        },
+      }),
+    [dragPos, onDrop, onTap],
+  );
+
+  const draggedPiece = dragFrom ? board[squareToIndex(dragFrom)] : null;
 
   return (
-    <View style={styles.frame}>
-      <View style={styles.grid}>
-        {rows.map((row, rowIndex) => (
-          <View key={rowIndex} style={styles.row}>
-            {row.map((index, colIndex) => {
-              const square = indexToSquare(index);
-              return (
-                <Square
-                  key={square}
-                  square={square}
-                  piece={board[index]}
-                  dark={isDarkSquare(index)}
-                  selected={selected === square}
-                  lastMove={lastMove !== null && (lastMove.from === square || lastMove.to === square)}
-                  target={targets.has(square)}
-                  size={squareSize}
-                  fileLabel={showCoords && rowIndex === 7 ? square[0] : undefined}
-                  rankLabel={showCoords && colIndex === 0 ? square[1] : undefined}
-                  onPress={onSquarePress}
-                />
-              );
-            })}
-          </View>
+    <View
+      ref={containerRef}
+      onLayout={onLayout}
+      style={[styles.frame, { padding: frame }]}
+      {...panResponder.panHandlers}
+    >
+      <View style={{ width: boardPx, height: boardPx }}>
+        <BoardSquares square={square} flipped={flipped} showCoords={showCoords} />
+
+        {lastMove && (
+          <>
+            <Highlight square={lastMove.from} geometry={geometry} color={theme.board.lastMove} />
+            <Highlight square={lastMove.to} geometry={geometry} color={theme.board.lastMove} />
+          </>
+        )}
+        {checkSquare && (
+          <Highlight square={checkSquare} geometry={geometry} color={theme.board.check} />
+        )}
+        {highlightFrom && (
+          <Highlight square={highlightFrom} geometry={geometry} color={theme.board.selected} />
+        )}
+
+        <BoardPieces
+          board={board}
+          geometry={geometry}
+          animating={animating}
+          draggingFrom={dragFrom}
+        />
+
+        {[...targets].map(sq => (
+          <TargetDot
+            key={sq}
+            square={sq}
+            geometry={geometry}
+            occupied={board[squareToIndex(sq)] !== null}
+          />
         ))}
+
+        {draggedPiece && (
+          <Animated.View
+            style={[
+              styles.dragged,
+              {
+                transform: [
+                  { translateX: dragPos.x },
+                  { translateY: dragPos.y },
+                  { scale: theme.piece.dragScale },
+                ],
+              },
+            ]}
+            pointerEvents="none"
+          >
+            <PieceView piece={draggedPiece} size={square} />
+          </Animated.View>
+        )}
       </View>
     </View>
   );
 }
 
+function Highlight({
+  square, geometry, color,
+}: { square: string; geometry: Geometry; color: string }) {
+  const p = squareToXY(square, geometry);
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        width: geometry.square,
+        height: geometry.square,
+        backgroundColor: color,
+        opacity: 0.55,
+        transform: [{ translateX: p.x }, { translateY: p.y }],
+      }}
+    />
+  );
+}
+
+function TargetDot({
+  square, geometry, occupied,
+}: { square: string; geometry: Geometry; occupied: boolean }) {
+  const p = squareToXY(square, geometry);
+  const s = geometry.square;
+  const size = occupied ? s * 0.9 : s * 0.26;
+  const offset = (s - size) / 2;
+
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        backgroundColor: occupied ? 'transparent' : theme.board.target,
+        borderWidth: occupied ? s * 0.07 : 0,
+        borderColor: theme.board.target,
+        transform: [{ translateX: p.x + offset }, { translateY: p.y + offset }],
+      }}
+    />
+  );
+}
+
 const styles = StyleSheet.create({
   frame: {
-    padding: FRAME,
     backgroundColor: theme.board.frame,
     borderRadius: 4,
-    // Genişlik verilmiyor: içerik kadar olsun, hesap hatası ihtimali kalmasın.
     alignSelf: 'center',
   },
-  grid: { overflow: 'hidden' },
-  row: { flexDirection: 'row' },
+  dragged: { position: 'absolute', left: 0, top: 0, zIndex: 10 },
 });

@@ -1,18 +1,20 @@
 /**
- * KONUM: app/src/native/nativeEngine.ts   (yeni dosya)
+ * KONUM: app/src/native/nativeEngine.ts   (üzerine yaz)
  *
- * TurboModule çağrıları senkron; arayüzü Promise'e sarıyoruz. Adım 4'te
- * bestMove arka plana taşındığında yalnızca bu dosya değişecek.
+ * Yoklama döngüsü burada. C++ tarafı startSearch/searchState/stop veriyor,
+ * biz onu Promise'e sarıyoruz. Ekran kodu bu ayrıntıyı hiç görmüyor.
  */
 
 import NativeChessEngine from '../../specs/NativeChessEngine';
 import type {
   ChessEngine,
-  SearchInfo,
+  SearchProgress,
   Side,
   Snapshot,
   Status,
 } from '../chess/engine';
+
+const POLL_MS = 80;
 
 type RawSnapshot = {
   fen: string;
@@ -22,6 +24,19 @@ type RawSnapshot = {
   legal: string[];
   history: string[];
 };
+
+type RawSearch = {
+  running: boolean;
+  move: string;
+  depth: number;
+  score: number;
+  nodes: number;
+  mate: boolean;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 export class NativeEngine implements ChessEngine {
   async newGame(fen: string = ''): Promise<boolean> {
@@ -52,9 +67,36 @@ export class NativeEngine implements ChessEngine {
     return NativeChessEngine.sanFor(uci);
   }
 
-  async bestMove(timeMs: number, maxDepth: number = 64): Promise<string> {
-    // UYARI: bu çağrı bitene kadar arayüz donar. Adım 4'te düzelecek.
-    return NativeChessEngine.bestMove(timeMs, maxDepth);
+  async bestMove(
+    timeMs: number,
+    maxDepth: number = 64,
+    onProgress?: (p: SearchProgress) => void,
+  ): Promise<string> {
+    NativeChessEngine.startSearch(timeMs, maxDepth);
+
+    // Emniyet payı: motor beklenenden uzun sürerse kesip çıkıyoruz.
+    // Sonsuz döngüde kalmak, donmaktan beterdir.
+    const deadline = Date.now() + timeMs + 10000;
+
+    for (;;) {
+      await sleep(POLL_MS);
+      const s = JSON.parse(NativeChessEngine.searchState()) as RawSearch;
+
+      if (!s.running) return s.move;
+
+      if (onProgress) {
+        onProgress({
+          depth: s.depth,
+          score: s.score,
+          nodes: s.nodes,
+          mate: s.mate,
+        });
+      }
+
+      if (Date.now() > deadline) {
+        NativeChessEngine.stop();
+      }
+    }
   }
 
   async stop(): Promise<void> {
@@ -71,9 +113,5 @@ export class NativeEngine implements ChessEngine {
 
   async setHashSizeMB(mb: number): Promise<void> {
     NativeChessEngine.setHashSizeMB(mb);
-  }
-
-  async lastSearchInfo(): Promise<SearchInfo> {
-    return JSON.parse(NativeChessEngine.lastSearchInfo()) as SearchInfo;
   }
 }
