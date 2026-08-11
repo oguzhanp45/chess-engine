@@ -1,9 +1,7 @@
 /**
- * KONUM: app/src/screens/NewGameScreen.tsx   (yeni dosya)
+ * KONUM: app/src/screens/NewGameScreen.tsx   (üzerine yaz)
  *
- * Oyun kurulum ekranı. Seçimler burada toplanır, "Başlat" ile oyun ekranına
- * parametre olarak geçer. Oyun ekranı kendi başına hiçbir varsayılan üretmez —
- * ne oynanacağını tek yerden okuyoruz.
+ * Tüm metinler sözlükten. useLanguage() dil değişiminde yenilenmeyi sağlıyor.
  */
 
 import React, { useState } from 'react';
@@ -18,10 +16,13 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { theme } from '../theme';
+import { t, useLanguage } from '../i18n';
+import { levelLabel } from '../game/labels';
 import {
   DEFAULT_SETTINGS,
-  LEVEL_PRESETS,
+  LEVEL_VALUES,
   TIME_PRESETS,
+  timeId,
   timeLabel,
   type ColorChoice,
   type GameMode,
@@ -32,12 +33,14 @@ import type { PlayStackParamList } from '../navigation/types';
 type Props = NativeStackScreenProps<PlayStackParamList, 'NewGame'>;
 
 export default function NewGameScreen({ navigation }: Props) {
+  useLanguage();
+
   const [mode, setMode] = useState<GameMode>(DEFAULT_SETTINGS.mode);
   const [color, setColor] = useState<ColorChoice>(DEFAULT_SETTINGS.color);
   const [level, setLevel] = useState(DEFAULT_SETTINGS.level);
   const [time, setTime] = useState<TimeControl>(DEFAULT_SETTINGS.time);
+  const [useBook, setUseBook] = useState(DEFAULT_SETTINGS.useBook);
 
-  // Özel süre alanları metin olarak tutuluyor; sayıya çevirmeyi başlatırken yapıyoruz.
   const [customMin, setCustomMin] = useState('10');
   const [customInc, setCustomInc] = useState('5');
 
@@ -52,53 +55,63 @@ export default function NewGameScreen({ navigation }: Props) {
   };
 
   const start = () => {
-    navigation.navigate('Game', {
-      settings: { mode, color, level, time },
-    });
+    navigation.navigate('Game', { settings: { mode, color, level, time, useBook } });
   };
+
+  const activeTimeId = timeId(time);
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content}>
-      <Section title="Mod">
-        <Chip label="Yapay Zeka" active={mode === 'ai'} onPress={() => setMode('ai')} />
-        <Chip label="Yerel 1v1" active={mode === 'local'} onPress={() => setMode('local')} />
-        <Chip label="Eğitmen (Adım 11)" active={false} disabled onPress={() => {}} />
+      <Section title={t('newGame.mode')}>
+        <Chip label={t('newGame.ai')} active={mode === 'ai'} onPress={() => setMode('ai')} />
+        <Chip label={t('newGame.local')} active={mode === 'local'} onPress={() => setMode('local')} />
+        <Chip
+          label={`${t('newGame.tutor')} (${t('common.soon')})`}
+          active={false}
+          disabled
+          onPress={() => {}}
+        />
       </Section>
 
       {mode !== 'local' && (
         <>
-          <Section title="Rengin">
-            <Chip label="Beyaz" active={color === 'w'} onPress={() => setColor('w')} />
-            <Chip label="Siyah" active={color === 'b'} onPress={() => setColor('b')} />
-            <Chip label="Rastgele" active={color === 'random'} onPress={() => setColor('random')} />
+          <Section title={t('newGame.yourColor')}>
+            <Chip label={t('common.white')} active={color === 'w'} onPress={() => setColor('w')} />
+            <Chip label={t('common.black')} active={color === 'b'} onPress={() => setColor('b')} />
+            <Chip label={t('common.random')} active={color === 'random'} onPress={() => setColor('random')} />
           </Section>
 
-          <Section title="Zorluk">
-            {LEVEL_PRESETS.map(p => (
+          <Section title={t('newGame.difficulty')}>
+            {LEVEL_VALUES.map(value => (
               <Chip
-                key={p.level}
-                label={p.label}
-                active={level === p.level}
-                onPress={() => setLevel(p.level)}
+                key={value}
+                label={levelLabel(value)}
+                active={level === value}
+                onPress={() => setLevel(value)}
               />
             ))}
+          </Section>
+          
+          <Section title={t('newGame.book')}>
+            <Chip label={t('newGame.bookOn')} active={useBook} onPress={() => setUseBook(true)} />
+            <Chip label={t('newGame.bookOff')} active={!useBook} onPress={() => setUseBook(false)} />
           </Section>
         </>
       )}
 
-      <Section title="Süre">
-        {TIME_PRESETS.map(p => (
+      <Section title={t('newGame.time')}>
+        {TIME_PRESETS.map(preset => (
           <Chip
-            key={p.label}
-            label={p.label}
-            active={timeLabel(time) === p.label}
-            onPress={() => setTime(p.time)}
+            key={preset.id}
+            label={preset.id === 'unlimited' ? t('newGame.unlimited') : preset.id}
+            active={activeTimeId === preset.id}
+            onPress={() => setTime(preset.time)}
           />
         ))}
       </Section>
 
       <View style={styles.customRow}>
-        <Text style={styles.customLabel}>Özel:</Text>
+        <Text style={styles.customLabel}>{t('newGame.custom')}:</Text>
         <TextInput
           style={styles.input}
           value={customMin}
@@ -106,7 +119,7 @@ export default function NewGameScreen({ navigation }: Props) {
           keyboardType="number-pad"
           maxLength={3}
         />
-        <Text style={styles.customLabel}>dk  +</Text>
+        <Text style={styles.customLabel}>{t('newGame.minutes')}  +</Text>
         <TextInput
           style={styles.input}
           value={customInc}
@@ -114,21 +127,20 @@ export default function NewGameScreen({ navigation }: Props) {
           keyboardType="number-pad"
           maxLength={2}
         />
-        <Text style={styles.customLabel}>sn/hamle</Text>
-        <Chip label="Uygula" active={false} onPress={applyCustomTime} />
+        <Text style={styles.customLabel}>{t('newGame.perMove')}</Text>
+        <Chip label={t('common.apply')} active={false} onPress={applyCustomTime} />
       </View>
 
       <Text style={styles.summary}>
-        {mode === 'local' ? 'Yerel 1v1' : 'Yapay Zeka'} · {timeLabel(time)}
-        {mode !== 'local' &&
-          ` · ${LEVEL_PRESETS.find(p => p.level === level)?.label ?? level}`}
+        {mode === 'local' ? t('newGame.local') : t('newGame.ai')} · {timeLabel(time)}
+        {mode !== 'local' && ` · ${levelLabel(level)}`}
       </Text>
 
       <Pressable
         onPress={start}
         style={({ pressed }) => [styles.start, pressed && styles.pressed]}
       >
-        <Text style={styles.startText}>Oyunu Başlat</Text>
+        <Text style={styles.startText}>{t('newGame.start')}</Text>
       </Pressable>
     </ScrollView>
   );

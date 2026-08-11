@@ -1,21 +1,18 @@
 /**
- * KONUM: app/src/screens/HomeScreen.tsx   (yeni dosya)
+ * KONUM: app/src/screens/HomeScreen.tsx   (üzerine yaz)
  */
 
 import React from 'react';
 import Placeholder from '../components/Placeholder';
+import { t, tList, useLanguage } from '../i18n';
 
 export default function HomeScreen() {
+  useLanguage();
   return (
     <Placeholder
-      title="Ana Sayfa"
-      step="Adım 14'te doldurulacak"
-      items={[
-        'Kullanıcı kartı: isim, seviye, ELO, günlük seri',
-        'Günün bulmacası önizlemesi ve "Çöz" düğmesi',
-        'Hızlı oyna: Eğitmene karşı, Yapay zekaya karşı',
-        'Eğitime devam et: son kursun ilerleme çubuğu',
-      ]}
+      title={t('home.title')}
+      step={t('home.step')}
+      items={tList('home.items')}
     />
   );
 }

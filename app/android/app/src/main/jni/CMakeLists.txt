@@ -22,10 +22,13 @@ set_property(TARGET chessengine PROPERTY
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
   ../../../../../shared/NativeChessEngine.cpp
+../../../../../shared/AssetReader.cpp
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PUBLIC
   ../../../../../shared
 )
 
-target_link_libraries(${CMAKE_PROJECT_NAME} chessengine)
+target_link_libraries(${CMAKE_PROJECT_NAME}
+ android
+ chessengine)

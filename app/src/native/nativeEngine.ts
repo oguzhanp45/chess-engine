@@ -114,4 +114,8 @@ export class NativeEngine implements ChessEngine {
   async setHashSizeMB(mb: number): Promise<void> {
     NativeChessEngine.setHashSizeMB(mb);
   }
+
+  async setUseBook(on: boolean): Promise<void> {
+    NativeChessEngine.setUseBook(on);
+  }
 }

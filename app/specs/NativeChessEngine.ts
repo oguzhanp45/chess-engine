@@ -12,6 +12,9 @@
 import { TurboModule, TurboModuleRegistry } from 'react-native';
 
 export interface Spec extends TurboModule {
+  loadBook(assetName: string): string;   // JSON: {"ok":true,"bytes":123456}
+  setUseBook(on: boolean): void;
+
   readonly nativeVersion: () => string;
 
   readonly newGame: (fen: string) => boolean;

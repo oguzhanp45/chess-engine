@@ -1,14 +1,12 @@
 /**
  * KONUM: app/src/screens/PlayScreen.tsx   (üzerine yaz)
  *
- * DÜZELTME (tahta sallanması):
- *  - Kök artık içeriği dikeyde ORTALAMIYOR. Ortalanmış yığında panel uzayıp
- *    kısaldıkça tahta yukarı aşağı kayıyordu.
- *  - Tahta sabit ölçülü bir kutuya alındı; panel kalan alanı doldurur,
- *    içeriği değişse de tahtayı itmez.
- *  - Bilgi satırı her zaman çizilir (boşken bile), sabit yükseklikte.
- *  - Hamle listesi sabit yükseklikte.
- *  - Arama bilgisi 80 ms yerine 250 ms'de bir güncellenir.
+ * Adım 6.5: tüm metinler sözlükten.
+ *
+ * Değişenler:
+ *  - statusText / scoreText artık game/labels.ts'ten (dil bilen sürüm)
+ *  - düğüm sayısı formatNumber ile (tr: 477.366, en: 477,366)
+ *  - değerlendirme '+1.25' / '#3' — çevrilmiyor, satrancın ortak gösterimi
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -23,29 +21,38 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import Board from '../components/Board';
+import ClockView from '../components/ClockView';
+import PromotionDialog from '../components/PromotionDialog';
+import GameOverDialog from '../components/GameOverDialog';
 import { theme } from '../theme';
 import { createEngine } from '../chess/createEngine';
 import {
   EMPTY_SNAPSHOT,
-  scoreText,
-  statusText,
   type ChessEngine,
   type SearchProgress,
   type Side,
   type Snapshot,
 } from '../chess/engine';
 import { fenToBoard, indexToSquare } from '../chess/fen';
-import { modeLabel, thinkTimeMs, timeLabel } from '../game/types';
+import { modeLabel, timeLabel } from '../game/types';
+import { evalText, sideName, statusText } from '../game/labels';
+import { allocateThinkTime } from '../game/clock';
+import { useClock } from '../game/useClock';
+import { formatNumber, t, useLanguage } from '../i18n';
 import type { PlayStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<PlayStackParamList, 'Game'>;
 
 const PROGRESS_THROTTLE_MS = 250;
+const MAX_ENGINE_FAILURES = 3;
+
+type MoveResult = 'moved' | 'promotion' | 'illegal';
 
 export default function PlayScreen({ route, navigation }: Props) {
+  useLanguage();
+
   const settings = route.params.settings;
   const vsEngine = settings.mode !== 'local';
-  const searchMs = thinkTimeMs(settings.time);
 
   const userColorRef = useRef<Side>(
     settings.color === 'random'
@@ -64,6 +71,7 @@ export default function PlayScreen({ route, navigation }: Props) {
   const cancelledRef = useRef(false);
   const animTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const engineBusyRef = useRef(false);
+  const failCountRef = useRef(0);
 
   const [box, setBox] = useState({ width: 0, height: 0 });
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
@@ -75,14 +83,21 @@ export default function PlayScreen({ route, navigation }: Props) {
   const [thinking, setThinking] = useState(false);
   const [note, setNote] = useState('');
   const [ready, setReady] = useState(false);
+  const [timeoutSide, setTimeoutSide] = useState<Side | null>(null);
+  const [resumeTick, setResumeTick] = useState(0);
+  const [promotion, setPromotion] = useState<{ from: string; to: string } | null>(null);
+  const [overDismissed, setOverDismissed] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      setSnapshot(await engine.snapshot());
-    } catch (e) {
-      setNote(`HATA snapshot: ${String(e)}`);
-    }
-  }, [engine]);
+  const onFlag = useCallback(
+    (side: Side) => {
+      engine.stop();
+      setTimeoutSide(side);
+      setNote('');
+    },
+    [engine],
+  );
+
+  const clock = useClock(settings.time, onFlag);
 
   const startGame = useCallback(async () => {
     setSelected(null);
@@ -90,15 +105,23 @@ export default function PlayScreen({ route, navigation }: Props) {
     setAnimating(null);
     setNote('');
     setReady(false);
+    setTimeoutSide(null);
+    setPromotion(null);
+    setOverDismissed(false);
+    failCountRef.current = 0;
+    cancelledRef.current = false;
+    clock.reset();
     try {
       await engine.setSkillLevel(settings.level);
+      await engine.setUseBook(settings.useBook !== false);
       await engine.newGame('');
       setSnapshot(await engine.snapshot());
+      clock.start('w');
       setReady(true);
     } catch (e) {
-      setNote(`HATA baslangic: ${String(e)}`);
+      setNote(String(e));
     }
-  }, [engine, settings.level]);
+  }, [clock, engine, settings.level]);
 
   useEffect(() => {
     startGame();
@@ -109,109 +132,190 @@ export default function PlayScreen({ route, navigation }: Props) {
       if (state !== 'active') {
         cancelledRef.current = true;
         engine.stop();
+        clock.pause();
+      } else {
+        clock.resume();
+        setResumeTick(n => n + 1);
       }
     });
     return () => sub.remove();
-  }, [engine]);
+  }, [clock, engine]);
 
   useEffect(() => {
     return () => {
       if (animTimerRef.current) clearTimeout(animTimerRef.current);
       engine.stop();
+      clock.pause();
     };
-  }, [engine]);
+  }, [clock, engine]);
 
   const applyMove = useCallback(
     async (from: string, to: string) => {
       setLastMove({ from, to });
       setAnimating({ from, to });
       setSelected(null);
-      await refresh();
+
+      const next = await engine.snapshot();
+      setSnapshot(next);
+
+      if (next.status === 'ongoing') {
+        clock.switchTo(next.sideToMove);
+      } else {
+        clock.pause();
+      }
 
       if (animTimerRef.current) clearTimeout(animTimerRef.current);
       animTimerRef.current = setTimeout(() => setAnimating(null), theme.anim.move + 30);
     },
-    [refresh],
+    [clock, engine],
   );
 
   const engineMove = useCallback(async () => {
     if (engineBusyRef.current) return;
     engineBusyRef.current = true;
-    cancelledRef.current = false;
-    searchStartRef.current = Date.now();
-    lastProgressRef.current = 0;
-    setThinking(true);
-    setNote('Motor düşünüyor...');
-
-    const onProgress = (p: SearchProgress) => {
-      // Kısılma: saniyede 12 kez yerine 4 kez ekran güncelle.
-      const now = Date.now();
-      if (now - lastProgressRef.current < PROGRESS_THROTTLE_MS) return;
-      lastProgressRef.current = now;
-
-      const elapsedSec = Math.max(1, now - searchStartRef.current) / 1000;
-      const nps = Math.round(p.nodes / elapsedSec);
-      setNote(`derinlik ${p.depth} · ${scoreText(p)} · ${nps.toLocaleString('tr-TR')} d/sn`);
-    };
 
     try {
+      const before = await engine.snapshot();
+      if (before.status !== 'ongoing' || before.sideToMove !== engineColor) return;
+      if (clock.flagged() !== null) return;
+
+      cancelledRef.current = false;
+      searchStartRef.current = Date.now();
+      lastProgressRef.current = 0;
+      setThinking(true);
+      setNote(t('play.thinking'));
+
+      const searchMs = allocateThinkTime(
+        clock.remaining(engineColor),
+        clock.incrementMs,
+        settings.level,
+      );
+
+      const onProgress = (p: SearchProgress) => {
+        const now = Date.now();
+        if (now - lastProgressRef.current < PROGRESS_THROTTLE_MS) return;
+        lastProgressRef.current = now;
+        const elapsedSec = Math.max(1, now - searchStartRef.current) / 1000;
+        setNote(
+          t('play.searchInfo', {
+            depth: p.depth,
+            score: evalText(p),
+            nps: formatNumber(Math.round(p.nodes / elapsedSec)),
+          }),
+        );
+      };
+
       const uci = await engine.bestMove(searchMs, 64, onProgress);
 
-      if (cancelledRef.current) { setNote('Arama iptal edildi.'); return; }
-      if (!uci) { setNote('Motor hamle bulamadı.'); return; }
+      if (cancelledRef.current) { setNote(''); return; }
+      if (clock.flagged() !== null) { setNote(''); return; }
+
+      const after = await engine.snapshot();
+      if (after.status !== 'ongoing' || after.sideToMove !== engineColor) {
+        setNote('');
+        return;
+      }
+
+      if (!uci) {
+        failCountRef.current += 1;
+        setNote(t('play.noMoveFound'));
+        return;
+      }
 
       if (await engine.makeMove(uci)) {
+        failCountRef.current = 0;
+        setNote('');
         await applyMove(uci.slice(0, 2), uci.slice(2, 4));
+      } else {
+        failCountRef.current += 1;
       }
     } finally {
       engineBusyRef.current = false;
       setThinking(false);
     }
-  }, [applyMove, engine, searchMs]);
+  }, [applyMove, clock, engine, engineColor, settings.level]);
 
   useEffect(() => {
     if (!ready || !vsEngine) return;
-    if (engineBusyRef.current) return;
+    if (engineBusyRef.current || thinking) return;
+    if (timeoutSide !== null) return;
+    if (promotion !== null) return;
+    if (failCountRef.current >= MAX_ENGINE_FAILURES) return;
     if (snapshot.status !== 'ongoing') return;
     if (snapshot.sideToMove !== engineColor) return;
     if (snapshot.legalMoves.length === 0) return;
     engineMove();
-  }, [ready, vsEngine, snapshot, engineColor, engineMove]);
+  }, [
+    ready, vsEngine, snapshot, engineColor, engineMove,
+    timeoutSide, resumeTick, thinking, promotion,
+  ]);
 
   const undo = useCallback(async () => {
-    if (thinking || engineBusyRef.current) return;
+    if (thinking || engineBusyRef.current || timeoutSide !== null) return;
     setSelected(null);
     setLastMove(null);
     setAnimating(null);
     setNote('');
+    setPromotion(null);
+    setOverDismissed(false);
+    failCountRef.current = 0;
 
     if (!(await engine.undo())) return;
     if (vsEngine) {
       const s = await engine.snapshot();
       if (s.sideToMove !== userColor) await engine.undo();
     }
-    await refresh();
-  }, [engine, refresh, thinking, userColor, vsEngine]);
+    const next = await engine.snapshot();
+    setSnapshot(next);
+    setTimeoutSide(null);
+    clock.start(next.sideToMove);
+  }, [clock, engine, thinking, timeoutSide, userColor, vsEngine]);
 
   const stopSearch = useCallback(() => engine.stop(), [engine]);
 
   const tryMove = useCallback(
-    async (from: string, to: string): Promise<boolean> => {
+    async (from: string, to: string): Promise<MoveResult> => {
       const plain = from + to;
-      let uci = plain;
-      if (!snapshot.legalMoves.includes(plain)) {
-        const promo = snapshot.legalMoves.find(m => m.startsWith(plain) && m.length === 5);
-        if (!promo) return false;
-        uci = plain + 'q'; // Adım 6.4: taş seçme penceresi
+
+      if (snapshot.legalMoves.includes(plain)) {
+        if (await engine.makeMove(plain)) {
+          setNote('');
+          await applyMove(from, to);
+          return 'moved';
+        }
+        return 'illegal';
       }
-      if (await engine.makeMove(uci)) {
-        await applyMove(from, to);
-        setNote('');
-        return true;
+
+      const hasPromo = snapshot.legalMoves.some(
+        m => m.length === 5 && m.startsWith(plain),
+      );
+      if (hasPromo) {
+        setPromotion({ from, to });
+        setSelected(null);
+        return 'promotion';
       }
-      return false;
+
+      return 'illegal';
     },
     [applyMove, engine, snapshot.legalMoves],
+  );
+
+  const completePromotion = useCallback(
+    async (code: 'q' | 'r' | 'b' | 'n') => {
+      if (promotion === null) return;
+      const { from, to } = promotion;
+      setPromotion(null);
+      setBusy(true);
+      try {
+        if (await engine.makeMove(from + to + code)) {
+          setNote('');
+          await applyMove(from, to);
+        }
+      } finally {
+        setBusy(false);
+      }
+    },
+    [applyMove, engine, promotion],
   );
 
   const canOriginate = useCallback(
@@ -222,7 +326,8 @@ export default function PlayScreen({ route, navigation }: Props) {
     [snapshot.legalMoves, snapshot.sideToMove, userColor, vsEngine],
   );
 
-  const inputLocked = busy || thinking || snapshot.status !== 'ongoing';
+  const over = snapshot.status !== 'ongoing' || timeoutSide !== null;
+  const inputLocked = busy || thinking || over || promotion !== null;
 
   const onTap = useCallback(
     async (square: string) => {
@@ -235,8 +340,10 @@ export default function PlayScreen({ route, navigation }: Props) {
 
       setBusy(true);
       try {
-        const ok = await tryMove(selected, square);
-        if (!ok) setSelected(canOriginate(square) ? square : null);
+        const result = await tryMove(selected, square);
+        if (result === 'illegal') {
+          setSelected(canOriginate(square) ? square : null);
+        }
       } finally {
         setBusy(false);
       }
@@ -249,8 +356,8 @@ export default function PlayScreen({ route, navigation }: Props) {
       if (to === null || to === from) { setSelected(from); return; }
       setBusy(true);
       try {
-        const ok = await tryMove(from, to);
-        if (!ok) setSelected(from);
+        const result = await tryMove(from, to);
+        if (result === 'illegal') setSelected(from);
       } finally {
         setBusy(false);
       }
@@ -282,7 +389,20 @@ export default function PlayScreen({ route, navigation }: Props) {
       : Math.min(availW, availH * 0.62),
   );
 
-  const over = snapshot.status !== 'ongoing';
+  const resultText =
+    timeoutSide !== null
+      ? t('play.timeUp', { winner: sideName(timeoutSide === 'w' ? 'b' : 'w') })
+      : statusText(snapshot.status, snapshot.sideToMove);
+
+  const scoreLine = useMemo(() => {
+    if (timeoutSide !== null) return timeoutSide === 'w' ? '0-1' : '1-0';
+    if (snapshot.status === 'checkmate') return snapshot.sideToMove === 'w' ? '0-1' : '1-0';
+    if (snapshot.status === 'ongoing') return '';
+    return '\u00BD-\u00BD';
+  }, [snapshot.sideToMove, snapshot.status, timeoutSide]);
+
+  const topSide: Side = flipped ? 'w' : 'b';
+  const bottomSide: Side = flipped ? 'b' : 'w';
 
   return (
     <View
@@ -292,7 +412,6 @@ export default function PlayScreen({ route, navigation }: Props) {
         setBox({ width, height });
       }}
     >
-      {/* Sabit ölçülü kutu: içerideki tahta ne olursa olsun bu kutu kımıldamaz */}
       <View style={{ width: boardSize, height: boardSize }}>
         {boardSize > 40 && (
           <Board
@@ -313,45 +432,61 @@ export default function PlayScreen({ route, navigation }: Props) {
       </View>
 
       <View style={[styles.panel, isLandscape ? styles.panelSide : styles.panelBottom]}>
+        <ClockView clock={clock} side={topSide} label={sideName(topSide)} />
+
         <Text style={styles.dim}>
           {modeLabel(settings.mode)} · {timeLabel(settings.time)}
-          {vsEngine && ` · sen ${userColor === 'w' ? 'beyaz' : 'siyah'}`}
+          {vsEngine && ` · ${t('play.youAre', { color: sideName(userColor).toLowerCase() })}`}
         </Text>
 
         <Text style={styles.turn}>
-          Sıra: {snapshot.sideToMove === 'w' ? 'Beyaz' : 'Siyah'}
-          {snapshot.inCheck ? '  ·  ŞAH!' : ''}
+          {t('play.turn', { side: sideName(snapshot.sideToMove) })}
+          {snapshot.inCheck ? `  ·  ${t('play.check')}` : ''}
         </Text>
 
-        <Text style={over ? styles.over : styles.dim}>
-          {statusText(snapshot.status, snapshot.sideToMove)}
-        </Text>
+        <Text style={over ? styles.over : styles.dim}>{resultText}</Text>
 
-        {/* Boşken de çizilir: satır gelip gitmesin, yükseklik sabit kalsın */}
-        <Text style={styles.note} numberOfLines={1}>
-          {note}
-        </Text>
+        <Text style={styles.note} numberOfLines={1}>{note}</Text>
+
+        <ClockView clock={clock} side={bottomSide} label={sideName(bottomSide)} />
 
         <View style={styles.buttons}>
-          <Button label="Yeniden" onPress={startGame} />
-          <Button label="Geri al" onPress={undo} />
-          <Button label="Çevir" onPress={() => setFlipped(f => !f)} />
-          {thinking && <Button label="Durdur" onPress={stopSearch} />}
-          {!vsEngine && !thinking && (
-            <Button label="Motor oynasın" onPress={engineMove} />
+          <Button label={t('play.again')} onPress={startGame} />
+          <Button label={t('play.undo')} onPress={undo} />
+          <Button label={t('play.flip')} onPress={() => setFlipped(f => !f)} />
+          {thinking && <Button label={t('play.stop')} onPress={stopSearch} />}
+          {!vsEngine && !thinking && !over && (
+            <Button label={t('play.engineMove')} onPress={engineMove} />
           )}
-          <Button label="Menü" onPress={() => navigation.goBack()} />
+          <Button label={t('common.menu')} onPress={() => navigation.goBack()} />
         </View>
 
-        <Text style={styles.section}>Hamleler</Text>
+        <Text style={styles.section}>{t('play.moves')}</Text>
         <ScrollView style={styles.historyBox}>
           <Text style={styles.historyText}>
             {snapshot.historySan.length > 0
               ? formatHistory(snapshot.historySan)
-              : 'Henüz hamle yok.'}
+              : t('play.noMoves')}
           </Text>
         </ScrollView>
       </View>
+
+      <PromotionDialog
+        visible={promotion !== null}
+        side={snapshot.sideToMove}
+        size={Math.floor(boardSize / 8)}
+        onPick={completePromotion}
+        onCancel={() => setPromotion(null)}
+      />
+
+      <GameOverDialog
+        visible={over && !overDismissed}
+        title={resultText}
+        score={scoreLine}
+        onRematch={startGame}
+        onMenu={() => navigation.goBack()}
+        onClose={() => setOverDismissed(true)}
+      />
     </View>
   );
 }
@@ -380,8 +515,8 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: theme.gap,
     gap: theme.gap,
-    alignItems: 'center',       // çapraz eksende ortala (kararlı)
-    justifyContent: 'flex-start', // ana eksende ORTALAMA — kayma buradan geliyordu
+    alignItems: 'center',
+    justifyContent: 'flex-start',
   },
   colLayout: { flexDirection: 'column' },
   rowLayout: { flexDirection: 'row' },
@@ -395,7 +530,7 @@ const styles = StyleSheet.create({
   },
   panelBottom: { alignSelf: 'stretch', flex: 1 },
   panelSide: { flex: 1, maxWidth: 340, alignSelf: 'stretch' },
-  turn: { color: theme.text, fontSize: 20, fontWeight: '700' },
+  turn: { color: theme.text, fontSize: 18, fontWeight: '700' },
   dim: { color: theme.textDim, fontSize: 13 },
   over: { color: theme.warn, fontSize: 15, fontWeight: '700' },
   note: { color: theme.warn, fontSize: 12, minHeight: 16 },
@@ -417,6 +552,6 @@ const styles = StyleSheet.create({
   },
   buttonPressed: { opacity: 0.6 },
   buttonText: { color: theme.text, fontSize: 14, fontWeight: '600' },
-  historyBox: { height: 120 },
+  historyBox: { height: 100 },
   historyText: { color: theme.textDim, fontSize: 14, lineHeight: 22 },
 });

@@ -1,23 +1,18 @@
 /**
- * KONUM: app/src/screens/PuzzlesScreen.tsx   (yeni dosya)
+ * KONUM: app/src/screens/PuzzlesScreen.tsx   (üzerine yaz)
  */
 
 import React from 'react';
 import Placeholder from '../components/Placeholder';
+import { t, tList, useLanguage } from '../i18n';
 
 export default function PuzzlesScreen() {
+  useLanguage();
   return (
     <Placeholder
-      title="Bulmacalar"
-      step="Adım 10'da doldurulacak"
-      items={[
-        'Günlük bulmaca',
-        'Zamanlı mod (3 / 5 dakika)',
-        'Hayatta kalma (3 yanlış)',
-        'Tematik: saldırı, savunma, oyun sonu, dengesizlikler',
-        'Taktik türleri: çatal, açmaz, şiş, saptırma, feda, mat',
-        'İpucu merdiveni ve bulmaca reytingi',
-      ]}
+      title={t('puzzles.title')}
+      step={t('puzzles.step')}
+      items={tList('puzzles.items')}
     />
   );
 }

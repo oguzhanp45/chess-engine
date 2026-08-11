@@ -10,13 +10,14 @@
  * tutan kap. Uygulamada bir tane olur.
  */
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Platform, StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { DarkTheme, NavigationContainer } from '@react-navigation/native';
 
 import RootTabs from './src/navigation/RootTabs';
 import { theme } from './src/theme';
+import { ensureBookLoaded } from './src/native/book';
 
 // React Navigation'ın kendi renk şeması; kendi paletimizle eşleştiriyoruz
 // ki ekran geçişlerinde beyaz bir kare parlamasın.
@@ -33,6 +34,8 @@ const navTheme = {
 };
 
 export default function App() {
+  // Kitap uygulama ömrü boyunca bir kez yüklenir; motor nesnesi tek.
+  useEffect(() => { ensureBookLoaded(); }, []);
   return (
     <SafeAreaProvider>
       <View style={styles.root}>

@@ -1,7 +1,7 @@
 // KONUM: app/shared/NativeChessEngine.cpp   (üzerine yaz)
 
 #include "NativeChessEngine.h"
-
+#include "AssetReader.h"
 #include <sstream>
 #include <utility>
 #include <vector>
@@ -41,6 +41,28 @@ std::string jsonArray(const std::vector<std::string>& items) {
 }
 
 } // namespace
+std::string NativeChessEngine::loadBook(jsi::Runtime&, std::string assetName) {
+    // Değişmez kural 3: arama sürerken motora dokunmuyoruz.
+    if (searching_.load()) {
+        return R"({"ok":false,"reason":"searching"})";
+    }
+
+    const std::vector<unsigned char> bytes = chessapp::readAsset(assetName);
+    if (bytes.empty()) {
+        return R"({"ok":false,"reason":"asset-not-found"})";
+    }
+
+    const bool ok = engine_.loadBookFromMemory(bytes.data(), bytes.size());
+    if (!ok) {
+        return R"({"ok":false,"reason":"parse-failed","bytes":)" +
+               std::to_string(bytes.size()) + "}";
+    }
+    return R"({"ok":true,"bytes":)" + std::to_string(bytes.size()) + "}";
+}
+
+void NativeChessEngine::setUseBook(jsi::Runtime&, bool on) {
+    engine_.setUseBook(on);
+}
 
 NativeChessEngine::NativeChessEngine(std::shared_ptr<CallInvoker> jsInvoker)
     : NativeChessEngineCxxSpec(std::move(jsInvoker)) {

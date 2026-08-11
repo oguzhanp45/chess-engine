@@ -52,6 +52,8 @@ export interface ChessEngine {
   setSkillLevel(level: number): Promise<void>;
   getSkillLevel(): Promise<number>;
   setHashSizeMB(mb: number): Promise<void>;
+  /** Açılış kitabı kullanılsın mı. Motor varsayılanı: açık. */
+  setUseBook(on: boolean): Promise<void>;
 }
 
 export const EMPTY_SNAPSHOT: Snapshot = {
@@ -63,27 +65,3 @@ export const EMPTY_SNAPSHOT: Snapshot = {
   historySan: [],
 };
 
-export function statusText(status: Status, side: Side): string {
-  switch (status) {
-    case 'ongoing':
-      return 'Oyun sürüyor';
-    case 'checkmate':
-      return side === 'w' ? 'Mat — siyah kazandı' : 'Mat — beyaz kazandı';
-    case 'stalemate':
-      return 'Pat — beraberlik';
-    case 'draw-fifty':
-      return 'Beraberlik — 50 hamle kuralı';
-    case 'draw-repetition':
-      return 'Beraberlik — üç kez tekrar';
-    case 'draw-material':
-      return 'Beraberlik — yetersiz materyal';
-    default:
-      return String(status);
-  }
-}
-
-/** Skoru okunur metne çevirir. */
-export function scoreText(p: SearchProgress): string {
-  if (p.mate) return `mat ${Math.abs(p.score)}`;
-  return (p.score >= 0 ? '+' : '') + (p.score / 100).toFixed(2);
-}

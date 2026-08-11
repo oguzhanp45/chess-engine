@@ -33,6 +33,9 @@ class NativeChessEngine
   explicit NativeChessEngine(std::shared_ptr<CallInvoker> jsInvoker);
   ~NativeChessEngine();
 
+  std::string loadBook(jsi::Runtime& rt, std::string assetName);
+  void setUseBook(jsi::Runtime& rt, bool on);
+
   std::string nativeVersion(jsi::Runtime& rt);
 
   bool newGame(jsi::Runtime& rt, std::string fen);

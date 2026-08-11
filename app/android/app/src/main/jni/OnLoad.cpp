@@ -34,6 +34,7 @@
 #include <fbjni/fbjni.h>
 #include <react/renderer/componentregistry/ComponentDescriptorProviderRegistry.h>
 #include <NativeChessEngine.h>
+#include "AssetReader.h"
 
 #ifdef REACT_NATIVE_APP_CODEGEN_HEADER
 #include REACT_NATIVE_APP_CODEGEN_HEADER
@@ -118,6 +119,7 @@ std::shared_ptr<TurboModule> javaModuleProvider(
 } // namespace facebook::react
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
+  chessapp::setJavaVM(vm);
   return facebook::jni::initialize(vm, [] {
     facebook::react::DefaultTurboModuleManagerDelegate::cxxModuleProvider =
         &facebook::react::cxxModuleProvider;

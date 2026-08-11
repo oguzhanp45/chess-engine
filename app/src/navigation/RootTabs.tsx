@@ -1,8 +1,11 @@
 /**
  * KONUM: app/src/navigation/RootTabs.tsx   (üzerine yaz)
  *
- * Değişiklik: "Oyna" sekmesi artık doğrudan tahtayı değil, PlayStack'i açıyor
- * (kurulum ekranı → oyun ekranı).
+ * Değişiklik: sekme etiketleri sözlükten geliyor. useLanguage() çağrısı
+ * sayesinde dil değişince bu bileşen yeniden çiziliyor.
+ *
+ * Not: `name` alanları ('Home', 'Play'...) İngilizce kalıyor — bunlar
+ * ekrana yazılmıyor, kod içindeki kimlikler. Çevrilirse navigasyon kırılır.
  */
 
 import React from 'react';
@@ -15,6 +18,7 @@ import PuzzlesScreen from '../screens/PuzzlesScreen';
 import LearnScreen from '../screens/LearnScreen';
 import MoreScreen from '../screens/MoreScreen';
 import { theme } from '../theme';
+import { t, useLanguage } from '../i18n';
 
 const Tab = createBottomTabNavigator();
 
@@ -26,6 +30,7 @@ function icon(symbol: string) {
 
 export default function RootTabs() {
   const { width, height } = useWindowDimensions();
+  useLanguage(); // dil değişince etiketler yenilensin
   const wide = width > height && width >= 700;
 
   return (
@@ -47,27 +52,27 @@ export default function RootTabs() {
       <Tab.Screen
         name="Home"
         component={HomeScreen}
-        options={{ tabBarLabel: 'Ana Sayfa', tabBarIcon: icon('\u2302') }}
+        options={{ tabBarLabel: t('tabs.home'), tabBarIcon: icon('\u2302') }}
       />
       <Tab.Screen
         name="Play"
         component={PlayStack}
-        options={{ tabBarLabel: 'Oyna', tabBarIcon: icon('\u265F') }}
+        options={{ tabBarLabel: t('tabs.play'), tabBarIcon: icon('\u265F') }}
       />
       <Tab.Screen
         name="Puzzles"
         component={PuzzlesScreen}
-        options={{ tabBarLabel: 'Bulmacalar', tabBarIcon: icon('\u25C8') }}
+        options={{ tabBarLabel: t('tabs.puzzles'), tabBarIcon: icon('\u25C8') }}
       />
       <Tab.Screen
         name="Learn"
         component={LearnScreen}
-        options={{ tabBarLabel: 'Öğren', tabBarIcon: icon('\u2632') }}
+        options={{ tabBarLabel: t('tabs.learn'), tabBarIcon: icon('\u2632') }}
       />
       <Tab.Screen
         name="More"
         component={MoreScreen}
-        options={{ tabBarLabel: 'Daha Fazla', tabBarIcon: icon('\u22EF') }}
+        options={{ tabBarLabel: t('tabs.more'), tabBarIcon: icon('\u22EF') }}
       />
     </Tab.Navigator>
   );
