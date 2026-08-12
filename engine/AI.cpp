@@ -956,7 +956,13 @@ Move AI::getBestMoveTimed(ChessBoard& board, int maxDepth, long long limitMs, lo
     if (useBook) {
         if (!book.isLoaded()) book.load(bookPath);   // dosya yalnizca bir kez okunur
         Move bookMove = book.getBookMove(board, moveGen);
-        if (!bookMove.isNull()) return bookMove;
+        if (!bookMove.isNull()) {
+            // Kitap hamlesinde arama yapilmadi; onceki aramanin skoru ve
+            // derinligi ekranda bayat veri olarak kalmasin.
+            lastScore = 0;
+            lastDepth = 0;
+            return bookMove;
+        }
     }
 
     std::vector<Move> legalMoves = moveGen.getLegalMoves(board);

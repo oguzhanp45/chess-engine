@@ -159,24 +159,37 @@ Move PolyglotBook::getBookMove(ChessBoard& board, MoveGenerator& moveGen) {
     size_t first = matchIndex;
     while (first > 0 && readKey(&data[(first - 1) * 16]) == boardHash) first--;
 
-    unsigned short maxWeight = 0;
-    std::vector<unsigned short> bestMoves;
+    // FAZ 5c: eskiden yalnizca en yuksek agirlikli hamle(ler) alinip aralarindan
+    // rastgele secilirdi. Tek baskin hamle varsa her oyun ayni acilisla basliyordu.
+    // Artik secim agirlikla ORANTILI: populer hamle sik, nadir hamle ara sira.
+    std::vector<unsigned short> moves;
+    std::vector<unsigned int> weights;
+    unsigned long long totalWeight = 0;
 
     for (size_t i = first; i < numEntries; i++) {
         const unsigned char* e = &data[i * 16];
         if (readKey(e) != boardHash) break;
 
-        unsigned short move = readU16(e + 8);
-        unsigned short weight = readU16(e + 10);
-
-        if (weight > maxWeight) { maxWeight = weight; bestMoves.clear(); bestMoves.push_back(move); }
-        else if (weight == maxWeight) bestMoves.push_back(move);
+        moves.push_back(readU16(e + 8));
+        weights.push_back(readU16(e + 10));
+        totalWeight += weights.back();
     }
-    if (bestMoves.empty()) return Move();
+    if (moves.empty()) return Move();
 
-    // FAZ 5a: srand/rand yerine bir kez tohumlanan mt19937
-    std::uniform_int_distribution<size_t> pick(0, bestMoves.size() - 1);
-    unsigned short chosen = bestMoves[pick(rng)];
+    size_t index = 0;
+    if (totalWeight == 0) {
+        // Agirliksiz kitap: esit sansla sec
+        std::uniform_int_distribution<size_t> pick(0, moves.size() - 1);
+        index = pick(rng);
+    } else {
+        std::uniform_int_distribution<unsigned long long> pick(0, totalWeight - 1);
+        unsigned long long r = pick(rng);
+        for (size_t i = 0; i < moves.size(); i++) {
+            if (r < weights[i]) { index = i; break; }
+            r -= weights[i];
+        }
+    }
+    unsigned short chosen = moves[index];
 
     int toCol = chosen & 7;
     int toRowPoly = (chosen >> 3) & 7;
@@ -203,7 +216,7 @@ Move PolyglotBook::getBookMove(ChessBoard& board, MoveGenerator& moveGen) {
         if (m.startRow == sRow && m.startCol == fromCol &&
             m.targetRow == tRow && m.targetCol == toCol &&
             m.promotionPiece == promotionPiece) {
-            info("info string Kitap hamlesi: " + Notation::toUci(m) + " (agirlik " + std::to_string(maxWeight) + ")");
+            info("info string Kitap hamlesi: " + Notation::toUci(m) + " (agirlik " + std::to_string(weights[index]) + ")");
             return m;
         }
     }
